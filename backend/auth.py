@@ -4,8 +4,14 @@ Everything lives in its own MySQL schema (config.AUTH_DB). That schema is hidden
 never appears as a provider table. Passwords are stored only as salted PBKDF2 hashes (never in clear text)."""
 import hashlib
 import hmac
+import os
 import re
 import secrets
+import sys
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 import config
 import db

@@ -1,6 +1,7 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
+gunicorn>=21.2
 pymysql>=1.1
-cryptography>=42      # needed by pymysql for MySQL 8 passwords (caching_sha2_password)
-openpyxl>=3.1.5       # for reading Excel sheets in bulk upload
-python-multipart>=0.0.9  # for handling file uploads in FastAPI
+cryptography>=42
+openpyxl>=3.1.5
+python-multipart>=0.0.9

@@ -13,9 +13,15 @@ Administrators (is_admin) also create tables. The built-in first login must chan
 """
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 from urllib.parse import quote
+
+# Ensure backend directory is in sys.path so sibling imports work from anywhere
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 import pymysql
 from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Request, UploadFile

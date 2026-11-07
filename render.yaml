@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: bstpl-sim-info
+    env: python
+    plan: free
+    region: oregon # or frankfurt, singapore, ohio
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.8
+      - key: MYSQL_HOST
+        value: gateway01.ap-northeast-1.prod.aws.tidbcloud.com
+      - key: MYSQL_PORT
+        value: 4000
+      - key: MYSQL_USER
+        value: 2DQWZxtzB8QkzXZ.root
+      - key: MYSQL_PASSWORD
+        sync: false
+      - key: MYSQL_DATABASE
+        value: sim_provider_data
+      - key: MYSQL_SSL_CA
+        value: system
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: SESSION_HOURS
+        value: "12"
+      - key: MAX_UPLOAD_MB
+        value: "25"
+

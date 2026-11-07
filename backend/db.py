@@ -10,10 +10,16 @@ import decimal
 import hashlib
 import io
 import logging
+import os
 import re
 import shlex
+import sys
 import threading
 import time
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 import openpyxl
 import pymysql
@@ -55,8 +61,20 @@ def _open(target):
     m = config.MYSQL
     kw = dict(host=m["host"], port=int(m["port"]), user=m["user"], password=m["password"], database=target,
               charset="utf8mb4", cursorclass=DictCursor, connect_timeout=5, read_timeout=120, write_timeout=120)
-    if m.get("ssl_ca"):
-        kw.update(ssl_ca=m["ssl_ca"], ssl_verify_cert=True, ssl_verify_identity=True)
+    ca = m.get("ssl_ca")
+    if ca:
+        if isinstance(ca, str) and os.path.isfile(ca):
+            kw.update(ssl_ca=ca, ssl_verify_cert=True, ssl_verify_identity=True)
+        elif str(ca).lower() in ("true", "1", "yes", "require", "system"):
+            # Auto-detect Linux/Render system CA bundle if present
+            for ca_path in ("/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem"):
+                if os.path.isfile(ca_path):
+                    kw.update(ssl_ca=ca_path, ssl_verify_cert=True, ssl_verify_identity=True)
+                    break
+            else:
+                kw.update(ssl={"ssl": True})
+        else:
+            kw.update(ssl_ca=ca)
     return pymysql.connect(**kw)
 
 
