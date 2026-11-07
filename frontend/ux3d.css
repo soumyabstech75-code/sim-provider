@@ -1,0 +1,11 @@
+/* ux3d.css - lightweight add-on (v3). Uses only variables defined in style.css (v2 used --a-soft / --shadow / --soft which do not
+   exist, which made the whole box-shadow invalid and REMOVED the 3D shadow of the main buttons). */
+.btn:not(.ghost):not(.sm){box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 4px 0 rgba(0,0,0,.22),0 10px 20px rgba(var(--arg),.35)}
+.btn:not(.ghost):not(.sm):hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 6px 0 rgba(0,0,0,.2),0 14px 26px rgba(var(--arg),.4)}
+.btn:not(.ghost):not(.sm):active{box-shadow:0 1px 0 rgba(0,0,0,.25)}
+.tabs button:hover{box-shadow:0 6px 14px rgba(var(--arg),.25)}
+table tbody tr:hover{box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.kbhint{position:fixed;left:14px;bottom:14px;z-index:5;font-size:12px;color:var(--mut);background:var(--card);border:1px solid var(--line);
+  border-radius:12px;padding:6px 10px;box-shadow:var(--sh);opacity:.85;pointer-events:none}
+.kbhint kbd{background:rgba(var(--arg),.12);border:1px solid var(--line);border-bottom-width:3px;border-radius:6px;padding:0 6px;font:inherit;font-weight:700}
+@media (hover:none),(prefers-reduced-motion:reduce){.kbhint{display:none}}
