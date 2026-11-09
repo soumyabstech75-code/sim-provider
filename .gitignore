@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Local configurations & secrets
+config_local.py
+backend/config_local.py
+.env
+*.local
+
+# Temporary & Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Upload / Scratch artifacts
+scratch/
+tmp/
+*.log
+
