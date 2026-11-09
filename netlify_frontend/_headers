@@ -1,0 +1,18 @@
+/*
+  X-Frame-Options: SAMEORIGIN
+  X-XSS-Protection: 1; mode=block
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Access-Control-Allow-Origin: *
+
+/style.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/script.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/ux3d.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/ux3d.js
+  Cache-Control: public, max-age=0, must-revalidate

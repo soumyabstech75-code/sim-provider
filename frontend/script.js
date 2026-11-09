@@ -36,11 +36,32 @@ const TYPES = {text: 'Text', longtext: 'Long text', int: 'Whole number', decimal
 const CUST = /customer/i, LIST = /plan|product|profile|requested|raised|provider|status|type/i, NUMCOL = /^(qty|quantity|amount|total|price|cost)$/i;
 const rowsUrl = t => t == ALL ? '/api/all' : `/api/tables/${enc(t)}`;
 
+/* ---------- backend URL detection (Netlify + Render support) ---------- */
+const RENDER_BACKEND_URL = 'https://sim-provider-1f4c.onrender.com';
+const isNetlify = window.location.hostname.includes('netlify.app') || window.location.hostname.includes('netlify');
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+// If window.API_BASE is set, use it. If on Netlify and window.USE_NETLIFY_PROXY is not true, use RENDER_BACKEND_URL
+const API_BASE = window.API_BASE !== undefined ? window.API_BASE : (isLocal ? '' : (isNetlify ? RENDER_BACKEND_URL : ''));
+const apiUrl = u => (u.startsWith('http://') || u.startsWith('https://')) ? u : (API_BASE + u);
+
+const getToken = () => { try { return localStorage.getItem('vi-token') || ''; } catch (e) { return ''; } };
+const setToken = tok => { try { if (tok) localStorage.setItem('vi-token', tok); else localStorage.removeItem('vi-token'); } catch (e) {} };
+
 /* ---------- talking to the backend ---------- */
 async function api(u, o = {}) {
-  if (o.body && typeof o.body != 'string') o = {...o, body: JSON.stringify(o.body), headers: {'Content-Type': 'application/json', ...o.headers}};
-  const r = await fetch(u, {credentials: 'same-origin', ...o}), d = await r.json().catch(() => ({}));
-  if (r.status == 401 && u != '/api/login') { showLogin('Your session ended. Please sign in again.'); throw Object.assign(Error('Signed out'), {silent: true}) }
+  const headers = {'Content-Type': 'application/json', ...(o.headers || {})};
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  if (o.body && typeof o.body != 'string') {
+    o = {...o, body: JSON.stringify(o.body)};
+  }
+  const r = await fetch(apiUrl(u), {credentials: 'include', ...o, headers}), d = await r.json().catch(() => ({}));
+  if (r.status == 401 && u != '/api/login') {
+    setToken('');
+    showLogin('Your session ended. Please sign in again.');
+    throw Object.assign(Error('Signed out'), {silent: true});
+  }
   if (!r.ok) throw Error(typeof d.detail == 'string' ? d.detail : 'Please check the values you entered');
   return d;
 }
@@ -131,18 +152,23 @@ function forcePw() {                                              // the built-i
 }
 $('#loginForm').onsubmit = async e => {
   e.preventDefault(); const b = $('#lBtn'), f = $('#loginForm'); b.classList.add('busy'); showErr('');
-  try { S.user = (await post('/api/login', {id: $('#lId').value.trim(), password: $('#lPw').value})).user; showApp() }
+  try {
+    const res = await post('/api/login', {id: $('#lId').value.trim(), password: $('#lPw').value});
+    if (res && res.token) setToken(res.token);
+    S.user = res.user;
+    showApp();
+  }
   catch (x) { showErr(x.message); f.classList.remove('shake'); void f.offsetWidth; f.classList.add('shake'); $('#lPw').select() }
   finally { b.classList.remove('busy') }
 };
 $('#userBtn').onclick = e => { e.stopPropagation(); $('#userMenu').classList.toggle('hide') };
 document.addEventListener('click', e => { if (!e.target.closest('.user')) $('#userMenu').classList.add('hide') });
 document.addEventListener('keydown', e => e.key == 'Escape' && $('#userMenu').classList.add('hide'));
-$('#logout').onclick = async () => { try { await post('/api/logout') } catch (e) {} showLogin() };
+$('#logout').onclick = async () => { try { await post('/api/logout') } catch (e) {} setToken(''); showLogin() };
 
 $('#chgPw').onclick = $('#pwWarnBtn').onclick = () => { $('#userMenu').classList.add('hide'); $('#pwForm').reset(); setMeter('pMeter', ''); $('#pCancel').textContent = 'Cancel'; $('#pwDlg').showModal() };
 $('#pCancel').onclick = async () => {
-  if (S.user && S.user.default_pw) { try { await post('/api/logout') } catch (e) {} showLogin() } else $('#pwDlg').close()
+  if (S.user && S.user.default_pw) { try { await post('/api/logout') } catch (e) {} setToken(''); showLogin() } else $('#pwDlg').close()
 };
 $('#pwDlg').addEventListener('cancel', e => { if (S.user && S.user.default_pw) e.preventDefault() });
 $('#pwForm').onsubmit = async e => {
@@ -589,8 +615,11 @@ $('#reset').onclick = () => {
 $('#dl').onclick = async () => {
   const btn = $('#dl'); btn.disabled = true;
   try {
-    const r = await fetch(`${rowsUrl(S.cur)}/export?${params(false)}`, {credentials: 'same-origin'});
-    if (r.status == 401) { showLogin('Your session ended. Please sign in again.'); return }
+    const token = getToken();
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const r = await fetch(apiUrl(`${rowsUrl(S.cur)}/export?${params(false)}`), {credentials: 'include', headers});
+    if (r.status == 401) { setToken(''); showLogin('Your session ended. Please sign in again.'); return }
     if (!r.ok) { const d = await r.json().catch(() => ({})); throw Error(typeof d.detail == 'string' ? d.detail : 'Download failed') }
     const blob = await r.blob(), a = document.createElement('a'), m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
     a.href = URL.createObjectURL(blob); a.download = m ? m[1] : (S.cur + '.xlsx');
@@ -638,8 +667,10 @@ function sendUpload(file, force) {
 
   const fd = new FormData(); fd.append('file', file);
   const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/upload?table=' + enc(S.cur || 'customer_data') + (force ? '&force=true' : ''));
+  xhr.open('POST', apiUrl('/api/upload?table=' + enc(S.cur || 'customer_data') + (force ? '&force=true' : '')));
   xhr.withCredentials = true;
+  const token = getToken();
+  if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
   xhr.upload.onprogress = e => {
     if (!e.lengthComputable || e.total <= 0) return;
     const pct = Math.min(Math.round(e.loaded / e.total * 90), 90);
