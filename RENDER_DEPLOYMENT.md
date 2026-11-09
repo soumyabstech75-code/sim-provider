@@ -86,9 +86,9 @@ DATABASE_URL=mysql://2DQWZxtzB8QkzXZ.root:RTksF8mDqlKfQz8u@gateway01.ap-northeas
    ```
    Application startup complete.
    Uvicorn running on http://0.0.0.0:10000
-   ==> Your service is live 🎉 at https://bstpl-sim-info.onrender.com
+   ==> Your service is live 🎉 at https://sim-provider-1f4c.onrender.com
    ```
-4. Click your Render URL (`https://your-service-name.onrender.com`) to access the website!
+4. Click your Render URL (`https://sim-provider-1f4c.onrender.com`) to access the website!
 
 ---
 

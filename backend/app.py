@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+  #!/usr/bin/env python3
 """app.py - the backend (FastAPI).   Run:  python app.py     then open http://localhost:8000
 API docs: http://localhost:8000/docs
 
@@ -25,6 +25,7 @@ if _HERE not in sys.path:
 
 import pymysql
 from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
@@ -73,6 +74,16 @@ async def lifespan(_):
 
 
 app = FastAPI(title="bstpl sim info", lifespan=lifespan)
+
+# Enable CORS for Netlify frontend, Render backend, localhost, and custom domains
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://.*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+)
 
 
 @app.middleware("http")
@@ -153,8 +164,18 @@ def who(request: Request):
     return (request.client.host if request.client else ""), request.headers.get("user-agent", "")
 
 
+def extract_token(request: Request) -> str:
+    token = request.cookies.get(COOKIE, "")
+    if not token:
+        auth_hdr = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
+        if auth_hdr.lower().startswith("bearer "):
+            token = auth_hdr[7:].strip()
+    return token
+
+
 def require_user(request: Request):
-    user = auth.user_for(request.cookies.get(COOKIE, ""))
+    token = extract_token(request)
+    user = auth.user_for(token)
     if not user:
         raise auth.AuthError("Please sign in.", 401)
     if user["default_pw"] and request.url.path != "/api/password":      # the well-known built-in password must be replaced first
@@ -172,15 +193,17 @@ def require_admin(user: dict = Depends(require_user)):
 @app.post("/api/login")
 def login(b: Login, request: Request, response: Response):
     token, user = auth.login(b.id, b.password, *who(request))
-    response.set_cookie(COOKIE, token, max_age=config.SESSION_HOURS * 3600, httponly=True, samesite="lax",
-                        secure=config.COOKIE_SECURE, path="/")
-    return {"user": user}
+    # When deployed on HTTPS (Render), samesite="none" allows cross-site Netlify -> Render calls
+    same_site = "none" if config.COOKIE_SECURE else "lax"
+    response.set_cookie(COOKIE, token, max_age=config.SESSION_HOURS * 3600, httponly=True,
+                        samesite=same_site, secure=config.COOKIE_SECURE, path="/")
+    return {"user": user, "token": token}
 
 
 @app.post("/api/logout")
 def logout(request: Request, response: Response):
     try:
-        auth.logout(request.cookies.get(COOKIE, ""), *who(request))
+        auth.logout(extract_token(request), *who(request))
     except Exception:
         pass
     response.delete_cookie(COOKIE, path="/")
@@ -188,7 +211,8 @@ def logout(request: Request, response: Response):
 
 
 @app.get("/api/me")
-def me(request: Request): return {"user": auth.user_for(request.cookies.get(COOKIE, ""))}
+def me(request: Request):
+    return {"user": auth.user_for(extract_token(request))}
 
 
 # ---- everything below needs a signed-in employee
@@ -341,6 +365,7 @@ def home():
 
 
 @app.get("/static/{name}", include_in_schema=False)
+@app.get("/{name}", include_in_schema=False)
 def static_file(name: str):
     if name not in WEB_FILES:
         raise HTTPException(404, "Not found")

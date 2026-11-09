@@ -16,6 +16,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Cloud detection: Render sets RENDER=true; any containerized deploy usually provides PORT
 IS_RENDER = bool(os.environ.get("RENDER")) or ("PORT" in os.environ and os.environ.get("PORT") != "8000")
 
+# Production Cloud URL (generated Render deployment URL)
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://sim-provider-1f4c.onrender.com")
+
 PORT = int(os.environ.get("PORT", 8000))
 # Cloud platforms require 0.0.0.0 to bind externally; local default is 127.0.0.1
 HOST = os.environ.get("HOST", "0.0.0.0" if (IS_RENDER or "PORT" in os.environ) else "127.0.0.1")
@@ -34,7 +37,7 @@ MYSQL = {
 AUTH_DB = "vi_tracker_auth"
 SESSION_HOURS = 12
 # On Render / HTTPS, secure cookies are enabled automatically
-COOKIE_SECURE = True if IS_RENDER else False
+COOKIE_SECURE = True if (IS_RENDER or "onrender.com" in RENDER_URL) else False
 MAX_UPLOAD_MB = 25
 
 DEFAULT_ADMIN = {
