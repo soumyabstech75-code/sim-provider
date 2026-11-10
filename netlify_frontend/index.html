@@ -5,8 +5,8 @@
 <style>.hide{display:none!important}</style>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700;800&display=swap">
-<link rel="stylesheet" href="style.css?v=12">
-<link rel="stylesheet" href="ux3d.css?v=12"></head><body>
+<link rel="stylesheet" href="style.css?v=20261109">
+<link rel="stylesheet" href="ux3d.css?v=20261109"></head><body>
 <canvas id="bg" aria-hidden="true"></canvas>
 <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
 
@@ -58,32 +58,30 @@
     <section id="vData" class="rise">
       <div class="card tablebar"><div id="chips"></div><button class="btn ghost" id="newTable">➕ New table</button></div>
       <div id="work" class="hide">
-        <nav class="tabs subnav"><button class="on" data-t="fetch">🔍 Fetch</button><button data-t="add">➕ Insert</button></nav>
+        <nav class="tabs subnav"><button class="on" data-t="fetch">📊 Data</button><button data-t="add">➕ Insert</button></nav>
         <section id="fetch" class="rise">
-          <div class="card upload-bar">
-            <div class="row between">
-              <div>
-                <strong>📁 Bulk Upload Excel (.xlsx)</strong>
-                <p class="hint" style="margin:2px 0 0">Each sheet name in the Excel file represents a SIM Provider (sensorise, iotivity, vi, growspace, taisys). Customer names are read from the table rows. Importing the identical file twice asks for confirmation.</p>
-              </div>
-              <div class="row" style="margin-top:0;align-items:center">
-                <input type="file" id="bulkFile" accept=".xlsx,.xlsm" class="hide">
-                <button type="button" class="btn" id="bulkUploadBtn">📂 Choose & Upload Excel</button>
-                <span id="uploadStatus" class="tag hide"></span>
-              </div>
-            </div>
-          </div>
-          <div class="card filter-card"><div class="grid" id="filters"></div>
-            <div class="row between">
-              <div class="row top0">
-                <button class="btn" id="go">Fetch</button>
-                <button class="btn ghost" id="reset">Reset</button>
-                <button class="btn ghost" id="dl">⬇ Download Excel</button>
-                
+          <!-- Excel Table Action Bar -->
+          <div class="card excel-action-bar">
+            <div class="row between" style="align-items:center;flex-wrap:wrap;gap:10px">
+              <div class="row top0" style="align-items:center;gap:10px;flex-wrap:wrap">
+                <!-- Dedicated Download as Excel Sheet Option -->
+                <button type="button" class="btn excel-dl-btn" id="dl" title="Download current filtered data as an Excel spreadsheet">
+                  <span>⬇ Download Excel (.xlsx)</span>
+                </button>
+
+                <button type="button" class="btn ghost" id="reset" title="Clear all column filters and show all data">
+                  <span>🔄 Reset All Filters</span>
+                </button>
+
+                <!-- One-Time Delete All Data Option -->
+                <button type="button" class="btn btn-danger-outline" id="deleteAllBtn" title="Permanently delete all records in this table (Can only be executed once)">
+                  <span>🗑️ Delete All</span>
+                </button>
+
                 <!-- Column Visibility Dropdown -->
                 <div class="col-picker-wrap">
                   <button type="button" class="btn ghost" id="colPickerBtn" aria-expanded="false" title="Choose which columns to show in the table">
-                    ⚙ Columns <span class="tag" id="colBadge" style="margin-left:4px;font-size:10px">All</span> ▾
+                    ⚙ Columns <span class="tag" id="colBadge" style="margin-left:4px;font-size:10px">10</span> ▾
                   </button>
                   <div class="col-picker-menu hide" id="colPickerMenu">
                     <div class="col-picker-header">
@@ -93,13 +91,15 @@
                       </div>
                       <div class="row top0" style="gap:6px">
                         <button type="button" class="btn ghost sm" id="colSelectAll">All</button>
-                        <button type="button" class="btn ghost sm" id="colSelectDefault">Default</button>
+                        <button type="button" class="btn ghost sm" id="colSelectDefault">Core 10</button>
                         <button type="button" class="btn ghost sm" id="colClearAll">Clear</button>
                       </div>
                     </div>
                     <div class="col-picker-list" id="colPickerList"></div>
                   </div>
                 </div>
+
+                <div id="filterPills" class="filter-pills-row"></div>
               </div>
 
               <!-- Page Size Selector -->
@@ -111,15 +111,93 @@
                     <option value="250">250</option>
                     <option value="500">500</option>
                     <option value="1000">1000</option>
-                    <option value="5000">5,000 (use Download for everything)</option>
+                    <option value="5000">5,000</option>
                   </select>
                 </label>
               </div>
             </div>
           </div>
           <div class="stats" id="stats"></div>
-          <div class="card"><div class="wrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div>
-            <div class="pager"><span id="info"></span><span><button class="btn ghost" id="prev">‹ Prev</button> <button class="btn ghost" id="next">Next ›</button></span></div></div>
+
+          <!-- Interactive Analytics: Monthly Activations & Single/Dual Profile Pie Charts -->
+          <div class="card charts-card" id="analyticsSection">
+            <div class="row between top0" style="align-items:center;margin-bottom:12px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:22px">📊</span>
+                <div>
+                  <strong style="font-size:15px;display:block">SIM Activations & Profile Analytics</strong>
+                  <span class="hint" style="margin:0;font-size:12px">Visual breakdown of monthly activation percentages and single vs dual profile distribution</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <button type="button" class="btn ghost sm chart-default-btn hide" id="goDefaultAllBtn" title="Reset all chart filters to default representation as when you logged in">
+                  <span>↺ Go Default</span>
+                </button>
+                <button type="button" class="btn ghost sm" id="toggleChartsBtn" title="Toggle charts">
+                  <span id="toggleChartsText">Hide Charts ▲</span>
+                </button>
+              </div>
+            </div>
+            <div class="charts-grid" id="chartsGrid">
+              <!-- Chart 1: Monthly Activation Percentages -->
+              <div class="chart-box">
+                <div class="chart-header">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <strong>📅 Activation Percentage per Month</strong>
+                    <span class="tag" id="monthChartBadge">Monthly Share</span>
+                  </div>
+                  <button type="button" class="btn ghost sm chart-default-btn hide" id="goDefaultMonthBtn" title="Return to default monthly representation as when you logged in">
+                    <span>↩ Go Default</span>
+                  </button>
+                </div>
+                <div class="pie-layout">
+                  <div class="pie-graphic-wrap">
+                    <svg id="monthPieSvg" viewBox="0 0 200 200" class="pie-svg"></svg>
+                    <div class="pie-center-label" id="monthPieCenter">
+                      <b id="monthPieTotal">7,197</b>
+                      <span>Activated</span>
+                    </div>
+                  </div>
+                  <div class="pie-legend" id="monthPieLegend"></div>
+                </div>
+              </div>
+
+              <!-- Chart 2: Single vs Dual Profile -->
+              <div class="chart-box">
+                <div class="chart-header">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <strong>📶 Single vs Dual Profile Breakdown</strong>
+                    <span class="tag" id="profileChartBadge">Profile Types</span>
+                  </div>
+                  <button type="button" class="btn ghost sm chart-default-btn hide" id="goDefaultProfileBtn" title="Return to default profile representation as when you logged in">
+                    <span>↩ Go Default</span>
+                  </button>
+                </div>
+                <div class="pie-layout">
+                  <div class="pie-graphic-wrap">
+                    <svg id="profilePieSvg" viewBox="0 0 200 200" class="pie-svg"></svg>
+                    <div class="pie-center-label" id="profilePieCenter">
+                      <b id="profilePieRatio">74.6%</b>
+                      <span>Single</span>
+                    </div>
+                  </div>
+                  <div class="pie-legend" id="profilePieLegend"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card table-card" style="position:relative;z-index:1">
+            <div class="wrap">
+              <table id="dataTable">
+                <thead id="head"></thead>
+                <tbody id="body"></tbody>
+              </table>
+            </div>
+            <div class="pager"><span id="info"></span><span><button class="btn ghost" id="prev">‹ Prev</button> <button class="btn ghost" id="next">Next ›</button></span></div>
+            <!-- Excel Filter Popover Menu (Anchored to table headers) -->
+            <div id="excelFilterMenu" class="excel-filter-menu hide" role="dialog" aria-label="Excel column filter"></div>
+          </div>
         </section>
         <section id="add" class="hide rise">
           <div class="card empty hide" id="addAll"><h3>Choose a provider to add an entry</h3><div id="addPick"></div></div>
@@ -258,10 +336,80 @@
   </div>
 </dialog>
 
-<div class="themer">
+<!-- Professional Delete Entry Confirmation Modal -->
+<dialog id="deleteRowDlg" class="pro-modal">
+  <div class="pro-modal-body">
+    <div class="pro-modal-header">
+      <div class="pro-modal-icon danger">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          <line x1="10" y1="11" x2="10" y2="17"></line>
+          <line x1="14" y1="11" x2="14" y2="17"></line>
+        </svg>
+      </div>
+      <div>
+        <h3 style="margin:0 0 4px;font-size:16px;font-weight:700">Delete Record</h3>
+        <p style="margin:0;font-size:12px;color:var(--mut)">Permanently remove this entry from the database. The change will reflect immediately on the website.</p>
+      </div>
+    </div>
+
+    <!-- Record Preview Card -->
+    <div class="pro-record-card">
+      <div class="pro-record-row"><span class="pro-record-label">Customer</span><strong class="pro-record-val" id="delRowCustomer">—</strong></div>
+      <div class="pro-record-row"><span class="pro-record-label">Provider</span><strong class="pro-record-val" id="delRowProvider">—</strong></div>
+      <div class="pro-record-row"><span class="pro-record-label">Date</span><strong class="pro-record-val" id="delRowDate">—</strong></div>
+      <div class="pro-record-row"><span class="pro-record-label">Plan / Qty</span><strong class="pro-record-val" id="delRowPlan">—</strong></div>
+    </div>
+
+    <div class="pro-modal-actions">
+      <button type="button" class="btn ghost" id="delRowCancelBtn">Cancel</button>
+      <button type="button" class="btn btn-danger-solid" id="delRowConfirmBtn">
+        <span>Delete Record</span>
+      </button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Professional Delete All Modal -->
+<dialog id="deleteAllModal" class="pro-modal">
+  <div class="pro-modal-body">
+    <div class="pro-modal-header">
+      <div class="pro-modal-icon danger">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+      </div>
+      <div>
+        <h3 style="margin:0 0 4px;font-size:16px;font-weight:700">Delete All Table Data</h3>
+        <p style="margin:0;font-size:12px;color:var(--mut)">Wipes all entries in this table. <b>Strictly works only once</b> and locks permanently.</p>
+      </div>
+    </div>
+
+    <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);padding:10px 12px;border-radius:10px;font-size:12px;color:var(--tx)">
+      ⚠️ <b>Warning:</b> This action cannot be reversed.
+    </div>
+
+    <label style="font-size:12px;margin:0 0 10px;display:block">
+      Type <b>DELETE</b> to confirm:
+      <input type="text" id="delAllConfirmInput" placeholder="DELETE" style="width:100%;margin-top:6px;font-family:monospace;letter-spacing:1.5px;text-transform:uppercase" autocomplete="off">
+    </label>
+
+    <div class="pro-modal-actions">
+      <button type="button" class="btn ghost" id="delAllCancelBtn">Cancel</button>
+      <button type="button" class="btn btn-danger-solid" id="delAllConfirmBtn" disabled>
+        <span>Delete All Data</span>
+      </button>
+    </div>
+  </div>
+</dialog>
+
+<div class="themer" id="themer">
   <div class="menu up hide" id="themeMenu" role="menu" aria-label="Choose a theme"></div>
-  <button class="icon" id="themeBtn" title="Change theme" aria-label="Change theme">🎨</button>
+  <button class="icon" id="themeBtn" title="Change theme (Drag anywhere with cursor)" aria-label="Change theme">🎨</button>
 </div>
 <div id="toast" role="status"></div>
-<script src="script.js?v=12"></script>
-<script src="ux3d.js?v=12"></script></body></html>
+<script src="script.js?v=20261109"></script>
+<script src="ux3d.js?v=20261109"></script></body></html>

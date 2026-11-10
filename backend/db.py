@@ -287,27 +287,27 @@ def _all_cols():
 def build_where(cols, f):
     names = {c["name"] for c in cols}
     w, a = [], []
-    dc = f.get("date_col")
-    if dc in names:
+    dc = f.get("date_col") or next((c["name"] for c in cols if c["name"].lower() == "date"), None)
+    if dc and dc in names:
         if f.get("date_from"):
             w.append(f"{ident(dc)}>=%s"); a.append(f["date_from"])
         if f.get("date_to"):
             w.append(f"{ident(dc)}<=%s"); a.append(f["date_to"])
     if f.get("col") in names and f.get("val") not in (None, ""):
         w.append(f"{ident(f['col'])}=%s"); a.append(f["val"])
-    cust = f.get("customer")
-    if cust and cust != "__all__":
+    cust = f.get("customer") or f.get("cf_customer")
+    if cust and str(cust).strip() and cust != "__all__":
         cust_col = next((c["name"] for c in cols if c["name"].lower() == "customer"), None)
         if cust_col:
-            w.append(f"{ident(cust_col)}=%s"); a.append(cust)
-    prov = f.get("provider")
+            w.append(f"LOWER(CAST({ident(cust_col)} AS CHAR)) LIKE %s"); a.append(f"%{str(cust).strip().lower()}%")
+    prov = f.get("provider") or f.get("cf_provider")
     if prov and str(prov).strip().lower() not in ("__all__", "all data", "all providers", ""):
         prov_col = next((c["name"] for c in cols if c["name"].lower() == "provider"), None)
         if prov_col:
             w.append(f"LOWER(TRIM({ident(prov_col)}))=%s"); a.append(str(prov).strip().lower())
 
     # Requested by filter
-    req_by = f.get("requested_by")
+    req_by = f.get("requested_by") or f.get("cf_requested_by") or f.get("cf_REQUESTED BY")
     if req_by and str(req_by).strip():
         req_col = next((c["name"] for c in cols if c["name"].lower() in ("requested by", "requested_by", "requestedby")), None)
         if req_col:
@@ -315,12 +315,45 @@ def build_where(cols, f):
             a.append(f"%{str(req_by).strip().lower()}%")
 
     # Raised by filter
-    raised_by = f.get("raised_by")
+    raised_by = f.get("raised_by") or f.get("cf_raised_by") or f.get("cf_RAISED BY")
     if raised_by and str(raised_by).strip():
         raised_col = next((c["name"] for c in cols if c["name"].lower() in ("raised by", "raised_by", "raisedby")), None)
         if raised_col:
             w.append(f"LOWER(CAST({ident(raised_col)} AS CHAR)) LIKE %s")
             a.append(f"%{str(raised_by).strip().lower()}%")
+
+    # Generic Excel column filters (cf_<colName>)
+    col_map = {c["name"].lower(): c["name"] for c in cols}
+    handled_keys = {"q", "col", "val", "customer", "cf_customer", "provider", "cf_provider",
+                    "requested_by", "cf_requested_by", "cf_REQUESTED BY",
+                    "raised_by", "cf_raised_by", "cf_RAISED BY",
+                    "date_col", "date_from", "date_to", "sort", "desc", "limit", "offset", "table", "cols"}
+    for k, v in f.items():
+        if not v or str(v).strip() == "" or k in handled_keys:
+            continue
+        v_str = str(v).strip()
+        col_name = None
+        if k.startswith("cf_"):
+            target_k = k[3:].lower()
+            col_name = col_map.get(target_k)
+        elif k.lower() in col_map:
+            col_name = col_map[k.lower()]
+
+        if col_name:
+            cn = ident(col_name)
+            cl = col_name.lower()
+            if cl in ("qty", "quantity"):
+                w.append(f"(LOWER(CAST({ident('qty')} AS CHAR)) LIKE %s OR LOWER(CAST({ident('Quantity')} AS CHAR)) LIKE %s)")
+                a.extend([f"%{v_str.lower()}%", f"%{v_str.lower()}%"])
+            elif "," in v_str:
+                parts = [p.strip().lower() for p in v_str.split(",") if p.strip()]
+                if parts:
+                    placeholders = ", ".join(["%s"] * len(parts))
+                    w.append(f"LOWER(TRIM(CAST({cn} AS CHAR))) IN ({placeholders})")
+                    a.extend(parts)
+            else:
+                w.append(f"LOWER(CAST({cn} AS CHAR)) LIKE %s")
+                a.append(f"%{v_str.lower()}%")
     # Search every column (supports multiple words, exact phrases, date formats, etc.)
     q_raw = (f.get("q") or "").strip()
     if q_raw:
@@ -367,8 +400,11 @@ def search(table, f, sort="", desc=True, limit=100, offset=0):
         parts.append(f"{ident(pk)} DESC")
     orderby = (" ORDER BY " + ", ".join(parts)) if parts else ""
     sums = [n for n in names if SUMMED.match(n)]
+    today_iso = datetime.date.today().isoformat()
+    date_col = next((c["name"] for c in cols if c["name"].lower() in ("date", "activation_date")), None)
+    today_expr = f", COALESCE(SUM(CASE WHEN CAST({ident(date_col)} AS CHAR) LIKE '{today_iso}%%' THEN 1 ELSE 0 END),0) AS today_n" if date_col else ", 0 AS today_n"
     sel = ", ".join(["COUNT(*) AS n"] + [f"COALESCE(SUM(CAST(NULLIF(TRIM({ident(n)}),'') AS DECIMAL(20,2))),0) AS s{i}"
-                                         for i, n in enumerate(sums)])
+                                         for i, n in enumerate(sums)]) + today_expr
     limit, offset = min(max(int(limit), 1), 50000), max(int(offset), 0)
 
     def go(c):
@@ -377,7 +413,7 @@ def search(table, f, sort="", desc=True, limit=100, offset=0):
         c.execute(f"SELECT * FROM {ident(table)} WHERE {where}{orderby} LIMIT %s OFFSET %s", args + [limit, offset])
         return tot, c.fetchall()
     tot, rows = run(go)
-    return {"total": tot["n"], "columns": names, "pk": pk,
+    return {"total": tot["n"], "today_count": jsonable(tot.get("today_n", 0)), "columns": names, "pk": pk,
             "sums": [{"column": n, "sum": jsonable(tot[f"s{i}"])} for i, n in enumerate(sums)],
             "rows": [{k: jsonable(v) for k, v in r.items()} for r in rows]}
 
@@ -389,6 +425,192 @@ def values(table, column, limit=2000):
     rows = fetch(f"SELECT DISTINCT {ident(column)} AS v FROM {ident(table)} WHERE {ident(column)} IS NOT NULL "
                  f"AND CAST({ident(column)} AS CHAR)<>'' ORDER BY v LIMIT %s", (int(limit),))
     return [jsonable(r["v"]) for r in rows]
+
+
+def analytics(table, f=None):
+    """Monthly activation percentages & Single vs Dual Profile distribution."""
+    if f is None:
+        f = {}
+    if table == "__all__" or not table:
+        table = "customer_data"
+    cols = columns(table)
+    where, args = build_where(cols, f)
+
+    # 1. Monthly activations (based on date column)
+    date_col = next((c["name"] for c in cols if c["name"].lower() in ("date", "activation_date")), None)
+    monthly = []
+    if date_col:
+        sql = (f"SELECT LEFT(CAST({ident(date_col)} AS CHAR), 7) AS ym, COUNT(*) AS c "
+               f"FROM {ident(table)} WHERE {where} AND {ident(date_col)} IS NOT NULL "
+               f"GROUP BY ym ORDER BY ym")
+        rows = run(lambda c: (c.execute(sql, args), c.fetchall())[1])
+        tot_m = sum(r["c"] for r in rows) or 1
+        MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        for r in rows:
+            ym = str(r["ym"] or "").strip()
+            if not ym:
+                continue
+            parts = ym.split("-")
+            label = ym
+            if len(parts) == 2 and parts[1].isdigit():
+                m_num = int(parts[1])
+                if 1 <= m_num <= 12:
+                    label = f"{MONTH_NAMES[m_num]} {parts[0]}"
+            monthly.append({
+                "key": ym,
+                "label": label,
+                "count": int(r["c"]),
+                "pct": round(r["c"] / tot_m * 100, 1)
+            })
+
+    # 2. Profile distribution (Single vs Dual Profile)
+    profile_col = next((c["name"] for c in cols if c["name"].lower() in ("profile", "sim_profile")), None)
+    profiles = []
+    if profile_col:
+        sql = (f"SELECT {ident(profile_col)} AS p, COUNT(*) AS c "
+               f"FROM {ident(table)} WHERE {where} "
+               f"GROUP BY p")
+        rows = run(lambda c: (c.execute(sql, args), c.fetchall())[1])
+        single_cnt = 0
+        dual_cnt = 0
+        other_cnt = 0
+        for r in rows:
+            raw_p = str(r["p"] or "").strip().lower()
+            cnt = int(r["c"])
+            if not raw_p or raw_p in ("none", "null", ""):
+                other_cnt += cnt
+            elif "single" in raw_p or raw_p == "1 profile" or raw_p == "1":
+                single_cnt += cnt
+            elif "dual" in raw_p or "2 profile" in raw_p or "2" in raw_p or "(a+b)" in raw_p:
+                dual_cnt += cnt
+            else:
+                other_cnt += cnt
+
+        tot_p = single_cnt + dual_cnt + other_cnt or 1
+        if single_cnt > 0:
+            profiles.append({"type": "Single Profile", "count": single_cnt, "pct": round(single_cnt / tot_p * 100, 1), "color": "#0284c7"})
+        if dual_cnt > 0:
+            profiles.append({"type": "Dual Profile", "count": dual_cnt, "pct": round(dual_cnt / tot_p * 100, 1), "color": "#8b5cf6"})
+        if other_cnt > 0:
+            profiles.append({"type": "Standard / Other", "count": other_cnt, "pct": round(other_cnt / tot_p * 100, 1), "color": "#10b981"})
+
+    return {
+        "monthly": monthly,
+        "profiles": profiles
+    }
+
+
+# ------------------------------------------------------------------ ONE-TIME DELETE ALL DATA
+_delete_all_executed = set()
+
+
+def is_delete_all_used(table_name):
+    """Check if delete-all has already been executed for this table."""
+    if not table_name or table_name == "__all__":
+        table_name = "customer_data"
+    if table_name in _delete_all_executed:
+        return True
+    try:
+        def check(c):
+            c.execute("CREATE TABLE IF NOT EXISTS delete_all_log (table_name VARCHAR(100) PRIMARY KEY, executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, emp_id VARCHAR(50))")
+            c.execute("SELECT table_name FROM delete_all_log WHERE table_name = %s", (table_name,))
+            return bool(c.fetchone())
+        used = run(check, schema=config.AUTH_DB)
+        if used:
+            _delete_all_executed.add(table_name)
+        return used
+    except Exception:
+        return table_name in _delete_all_executed
+
+
+def delete_all_data_once(table_name, user_id="", ip_info=("", "")):
+    """Delete all records from table. Strictly works only once per table."""
+    if not table_name or table_name == "__all__":
+        table_name = "customer_data"
+    if is_delete_all_used(table_name):
+        raise ValueError(f"Delete All has already been executed for '{table_name}' and can only be used once.")
+
+    def go(c):
+        c.execute(f"DELETE FROM {ident(table_name)}")
+    run(go)
+
+    _delete_all_executed.add(table_name)
+    try:
+        def rec(c):
+            c.execute("CREATE TABLE IF NOT EXISTS delete_all_log (table_name VARCHAR(100) PRIMARY KEY, executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, emp_id VARCHAR(50))")
+            c.execute("INSERT INTO delete_all_log (table_name, emp_id) VALUES (%s, %s) ON DUPLICATE KEY UPDATE executed_at = NOW()", (table_name, user_id))
+        run(rec, schema=config.AUTH_DB)
+    except Exception:
+        pass
+
+    try:
+        auth.audit(user_id, "delete_all", f"Permanently deleted all rows from {table_name}", ip_info[0], ip_info[1])
+    except Exception:
+        pass
+
+    return {"ok": True, "message": f"All data deleted from {table_name}. Delete All is now permanently locked."}
+
+
+def delete_row(table_name, row_id, user_id="", ip_info=("", "")):
+    """Delete a single record from table by primary key (id)."""
+    if not table_name or table_name == "__all__":
+        table_name = "customer_data"
+    require_table(table_name)
+    cols = columns(table_name)
+    pk = next((c["name"] for c in cols if c["key"] == "PRI"), "id")
+
+    def fetch_row(c):
+        c.execute(f"SELECT * FROM {ident(table_name)} WHERE {ident(pk)} = %s LIMIT 1", (row_id,))
+        return c.fetchone()
+    row = run(fetch_row)
+    if not row:
+        raise LookupError(f"Record with ID '{row_id}' not found in '{table_name}'")
+
+    def go(c):
+        c.execute(f"DELETE FROM {ident(table_name)} WHERE {ident(pk)} = %s", (row_id,))
+        return c.rowcount
+    affected = run(go)
+
+    cust = row.get("customer") or row.get("CUSTOMER NAME") or row.get("CUSTOMER") or ""
+    prov = row.get("provider") or row.get("PROVIDER") or ""
+    info_txt = f"#{row_id}"
+    if cust:
+        info_txt += f" - {cust}"
+    if prov:
+        info_txt += f" ({prov})"
+
+    try:
+        auth.audit(user_id, "delete_row", f"Deleted record {info_txt} from {table_name}", ip_info[0], ip_info[1])
+    except Exception:
+        pass
+
+    invalidate()
+    return {"ok": True, "id": row_id, "affected": affected, "customer": cust, "provider": prov}
+
+
+def delete_rows(table_name, row_ids, user_id="", ip_info=("", "")):
+    """Delete multiple records from table by primary keys."""
+    if not table_name or table_name == "__all__":
+        table_name = "customer_data"
+    require_table(table_name)
+    if not row_ids:
+        return {"ok": True, "affected": 0}
+    cols = columns(table_name)
+    pk = next((c["name"] for c in cols if c["key"] == "PRI"), "id")
+
+    placeholders = ", ".join(["%s"] * len(row_ids))
+    def go(c):
+        c.execute(f"DELETE FROM {ident(table_name)} WHERE {ident(pk)} IN ({placeholders})", tuple(row_ids))
+        return c.rowcount
+    affected = run(go)
+
+    try:
+        auth.audit(user_id, "delete_rows", f"Deleted {affected} records from {table_name}", ip_info[0], ip_info[1])
+    except Exception:
+        pass
+
+    invalidate()
+    return {"ok": True, "affected": affected}
 
 
 # ------------------------------------------------------------------ ALL PROVIDERS (every table at once)

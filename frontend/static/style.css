@@ -89,7 +89,10 @@ select.auto{width:auto;margin:0}textarea{min-height:60px;resize:vertical}
 .user{position:relative}
 .avatar{width:38px;height:38px;border-radius:12px;border:0;color:var(--on);font-weight:800;cursor:pointer;background:linear-gradient(135deg,var(--a2),var(--a));box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 4px 0 -1px color-mix(in srgb,var(--a) 50%,#000),0 12px 18px -8px rgba(var(--arg),.7)}
 .menu{position:absolute;right:0;top:calc(100% + 12px);min-width:230px;padding:8px;border-radius:16px;background:var(--card);border:1px solid var(--line);box-shadow:var(--sh);animation:pop .15s ease-out}
-.themer{position:fixed;z-index:40;right:18px;bottom:18px;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.themer{position:fixed;z-index:9000;right:18px;bottom:18px;display:flex;flex-direction:column;align-items:flex-end;gap:10px;touch-action:none}
+.themer.dragging{user-select:none;opacity:.92}
+.themer.dragging #themeBtn{cursor:grabbing!important;transform:scale(1.1);box-shadow:0 14px 30px rgba(0,0,0,.4)}
+#themeBtn{cursor:grab;touch-action:none}
 .themer .icon{width:46px;height:46px;border-radius:16px;font-size:20px;box-shadow:var(--sh)}
 .menu.up{position:static;min-width:210px;max-height:60vh;overflow:auto}
 .menu .sw{display:flex;align-items:center;gap:12px}.menu .sw i{flex:none;width:22px;height:22px;border-radius:50%;border:2px solid var(--line);box-shadow:inset 0 0 0 3px var(--c1),inset 0 0 0 20px var(--c2)}
@@ -130,15 +133,46 @@ dialog h2{font-size:20px;margin-bottom:14px}dialog label+label{margin-top:12px}
 .form-subbox .grid{gap:10px}
 
 /* ---------- column picker dropdown ---------- */
-.filter-card{position:relative;z-index:100}
 .col-picker-wrap{position:relative;display:inline-block;z-index:110}
-.col-picker-menu{position:absolute;left:0;top:calc(100% + 8px);z-index:1000;width:min(340px,92vw);max-height:420px;overflow-y:auto;background:var(--card)!important;border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 18px 45px rgba(0,0,0,.35),0 4px 14px rgba(0,0,0,.15);animation:pop .15s ease-out}
+.col-picker-menu{position:absolute;left:0;top:calc(100% + 8px);z-index:99999!important;width:min(340px,92vw);max-height:420px;overflow-y:auto;background:var(--card)!important;border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 24px 50px rgba(0,0,0,.45),0 4px 16px rgba(0,0,0,.2);animation:pop .15s ease-out}
 .col-picker-header{padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:8px}
 .col-picker-list{display:flex;flex-direction:column;gap:3px;max-height:280px;overflow-y:auto;padding-right:4px}
 .col-picker-item{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:13px;user-select:none;transition:background .12s}
 .col-picker-item:hover{background:rgba(var(--arg),.09)}
 .col-picker-item input[type="checkbox"]{margin:0;width:16px;height:16px;cursor:pointer}
 .col-picker-item span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+
+/* ---------- Interactive Pie Charts & Analytics ---------- */
+.charts-card{padding:18px 20px;margin-bottom:18px;position:relative;z-index:2}
+.charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;margin-top:10px}
+.chart-box{background:rgba(var(--arg),.04);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px;transition:box-shadow .2s}
+.chart-box:hover{box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.chart-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.chart-header strong{font-size:13px;color:var(--tx)}
+.pie-layout{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.pie-graphic-wrap{position:relative;width:150px;height:150px;flex-shrink:0;margin:0 auto}
+.pie-svg{width:100%;height:100%;overflow:visible;filter:drop-shadow(0 4px 8px rgba(0,0,0,.15))}
+.pie-slice{transition:transform .2s ease,opacity .15s;cursor:pointer;transform-origin:100px 100px}
+.pie-slice:hover{opacity:.9;transform:scale(1.05)}
+.pie-center-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;text-align:center}
+.pie-center-label b{font-size:16px;font-weight:800;color:var(--tx);line-height:1.1}
+.pie-center-label span{font-size:10px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+.pie-legend{flex:1;min-width:160px;max-height:165px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;padding-right:4px}
+.pie-leg-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px;border-radius:6px;font-size:12px;cursor:pointer;transition:background .1s}
+.pie-leg-item:hover{background:rgba(var(--arg),.09)}
+.pie-leg-left{display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pie-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.pie-leg-title{font-weight:600;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pie-leg-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.pie-leg-pct{font-weight:700;font-size:11px;padding:2px 6px;border-radius:10px;background:rgba(var(--arg),.1);color:var(--a)}
+.pie-leg-cnt{font-size:11px;color:var(--mut)}
+.chart-default-btn{font-size:11px!important;padding:3px 10px!important;border-radius:14px!important;background:rgba(var(--arg),.1)!important;color:var(--a)!important;border:1px solid rgba(var(--arg),.28)!important;display:inline-flex;align-items:center;gap:4px;font-weight:700;transition:all .15s ease;cursor:pointer}
+.chart-default-btn:hover{background:var(--a)!important;color:var(--on)!important;box-shadow:0 2px 10px rgba(var(--arg),.35);transform:translateY(-1px)}
+.pie-slice.selected-slice{stroke:#fff!important;stroke-width:3px!important;filter:drop-shadow(0 0 8px rgba(var(--arg),.8));transform:scale(1.06);opacity:1!important}
+.pie-leg-item.active-pie-item{background:rgba(var(--arg),.15)!important;border:1px solid var(--a);font-weight:700}
+.pie-center-label.clickable{pointer-events:auto;cursor:pointer}
+.pie-center-label.clickable:hover b{color:var(--a);text-decoration:underline}
+.tag.active-pill{background:rgba(var(--arg),.15)!important;color:var(--a)!important;border:1px solid var(--a)!important;font-weight:700}
 
 /* ---------- upload progress & acknowledgment modal ---------- */
 .ack-dlg{width:min(680px,94vw);max-height:88vh;overflow-y:auto;padding:28px 24px;border-radius:22px}
@@ -158,6 +192,71 @@ dialog h2{font-size:20px;margin-bottom:14px}dialog label+label{margin-top:12px}
 
 #toast{position:fixed;z-index:50;bottom:26px;left:50%;transform:translate(-50%,20px);padding:12px 22px;border-radius:14px;color:#fff;background:var(--ok);box-shadow:0 18px 30px -12px rgba(0,0,0,.5);opacity:0;transition:.3s;pointer-events:none}
 #toast.show{opacity:1;transform:translate(-50%,0)}#toast.bad{background:var(--err)}
+
+/* ---------- Microsoft Excel Style Column Filtering & Action Bar ---------- */
+.excel-action-bar{position:relative;z-index:100;padding:14px 18px;margin-bottom:14px}
+.excel-dl-btn{background:#107c41!important;color:#fff!important;border:none!important;font-weight:700;display:inline-flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(16,124,65,.35);transition:transform .12s,box-shadow .12s}
+.excel-dl-btn:hover{background:#0e6b37!important;transform:translateY(-1px);box-shadow:0 6px 16px rgba(16,124,65,.45)}
+.excel-dl-btn svg{width:16px;height:16px;fill:currentColor}
+
+.btn-danger-outline{background:rgba(239,68,68,.08)!important;color:#ef4444!important;border:1px solid rgba(239,68,68,.3)!important;font-weight:600;display:inline-flex;align-items:center;gap:6px;transition:all .15s ease}
+.btn-danger-outline:hover:not(:disabled){background:#ef4444!important;color:#fff!important;box-shadow:0 4px 14px rgba(239,68,68,.35)}
+.btn-danger-outline:disabled,.btn-danger-outline.disabled{opacity:.45!important;cursor:not-allowed!important;filter:grayscale(1);pointer-events:none}
+
+.filter-pills-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.filter-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(var(--arg),.12);color:var(--a);border:1px solid rgba(var(--arg),.25)}
+.filter-pill button{background:none;border:none;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1;border-radius:50%}
+.filter-pill button:hover{color:var(--err)}
+
+/* Excel Table Header */
+.excel-th{position:relative;user-select:none;padding:10px 12px!important;white-space:nowrap}
+.excel-th-wrap{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.excel-th-text{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.excel-th-sort{font-size:11px;color:var(--mut);opacity:.7;cursor:pointer}
+.excel-th.sorted .excel-th-sort{color:var(--a);opacity:1;font-weight:700}
+
+.excel-filter-btn{background:rgba(var(--arg),.08);border:1px solid var(--line);border-radius:6px;width:24px;height:24px;display:grid;place-items:center;cursor:pointer;color:var(--mut);padding:0;transition:.15s;flex-shrink:0}
+.excel-filter-btn:hover{background:var(--a);color:var(--on);border-color:var(--a)}
+.excel-filter-btn.active{background:var(--a)!important;color:var(--on)!important;border-color:var(--a)!important;box-shadow:0 0 0 2px rgba(var(--arg),.35)}
+.excel-th.col-filtered{background:rgba(var(--arg),.08)!important;border-bottom:2px solid var(--a)!important}
+
+/* Excel Filter Popover Dropdown */
+.excel-filter-menu{position:fixed;z-index:9999;width:min(320px,92vw);background:var(--card)!important;border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 50px rgba(0,0,0,.45),0 4px 16px rgba(0,0,0,.15);padding:14px;animation:pop .15s ease-out}
+.excel-fm-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.excel-fm-head strong{font-size:13px;color:var(--tx)}
+.excel-fm-sort{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.excel-fm-sort button{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;font-size:12px;font-weight:600;background:none;border:none;border-radius:8px;color:var(--tx);cursor:pointer;text-align:left;transition:.12s}
+.excel-fm-sort button:hover{background:rgba(var(--arg),.09);color:var(--a)}
+.excel-fm-divider{height:1px;background:var(--line);margin:8px 0}
+.excel-fm-search{margin-bottom:10px}
+.excel-fm-search input{width:100%;padding:8px 10px;font-size:12px;border-radius:8px}
+.excel-fm-list{max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding:2px;margin-bottom:12px}
+.excel-fm-item{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;cursor:pointer;font-size:12px;transition:.1s}
+.excel-fm-item:hover{background:rgba(var(--arg),.07)}
+.excel-fm-item input{margin:0;width:15px;height:15px;cursor:pointer}
+.excel-fm-actions{display:flex;justify-content:space-between;align-items:center;gap:8px;padding-top:10px;border-top:1px solid var(--line)}
+
+/* ---------- professional delete & action styles ---------- */
+.tbl-action-cell{padding:6px 10px!important;text-align:center;width:44px;vertical-align:middle}
+.tbl-del-btn{width:28px;height:28px;border-radius:6px;background:transparent;border:1px solid transparent;color:var(--mut);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all .15s ease;opacity:.35}
+tr:hover .tbl-del-btn{opacity:.85}
+.tbl-del-btn:hover{opacity:1!important;background:rgba(239,68,68,.12);color:#ef4444;border-color:rgba(239,68,68,.28);transform:scale(1.12)}
+tr.row-deleted{opacity:0!important;transform:translateX(35px)!important;transition:all .35s ease!important;pointer-events:none}
+
+/* ---------- professional modals ---------- */
+.pro-modal{padding:0;overflow:hidden;width:min(460px,94vw);border-radius:20px;border:1px solid var(--line);box-shadow:0 30px 70px rgba(0,0,0,.5)}
+.pro-modal-body{padding:22px 24px;display:flex;flex-direction:column;gap:14px}
+.pro-modal-header{display:flex;align-items:flex-start;gap:14px}
+.pro-modal-icon{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pro-modal-icon.danger{background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.25)}
+.pro-record-card{background:rgba(var(--arg),.05);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.pro-record-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}
+.pro-record-label{color:var(--mut)}
+.pro-record-val{font-weight:600;color:var(--tx);text-align:right}
+.pro-modal-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:4px}
+.btn-danger-solid{background:#ef4444!important;color:#fff!important;border:none!important;font-weight:600;padding:9px 18px!important;border-radius:10px!important;transition:all .15s ease;cursor:pointer}
+.btn-danger-solid:hover:not(:disabled){background:#dc2626!important;box-shadow:0 4px 14px rgba(239,68,68,.4);transform:translateY(-1px)}
+.btn-danger-solid:disabled{opacity:.45!important;cursor:not-allowed!important}
 
 @media(max-width:940px){#login{grid-template-columns:1fr;gap:10px;padding:24px 18px}.hero{text-align:center}.lead,.perks{margin-left:auto;margin-right:auto;text-align:left}.scene{height:240px}.two{grid-template-columns:1fr}.right{margin-left:0;width:100%}.stats{grid-template-columns:repeat(2,1fr)!important}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}

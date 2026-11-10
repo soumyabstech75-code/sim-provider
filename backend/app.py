@@ -152,12 +152,8 @@ class NewTable(BaseModel):
     columns: List[Col]
 
 
-def filters(q: str = "", col: str = "", val: str = "", customer: str = "", provider: str = "",
-            requested_by: str = "", raised_by: str = "",
-            date_col: str = "", date_from: str = "", date_to: str = ""):
-    return dict(q=q, col=col, val=val, customer=customer, provider=provider,
-                requested_by=requested_by, raised_by=raised_by,
-                date_col=date_col, date_from=date_from, date_to=date_to)
+def filters(request: Request):
+    return dict(request.query_params)
 
 
 def who(request: Request):
@@ -266,6 +262,29 @@ def table_columns(table: str): return db.columns(table)
 def table_values(table: str, column: str): return {"values": db.values(table, column)}
 
 
+@api.get("/tables/{table}/analytics")                           # activation percentage per month & single/dual profile pie charts
+def table_analytics(table: str, f: dict = Depends(filters)):
+    return db.analytics(table, f)
+
+
+@api.get("/all/analytics")
+def all_analytics(f: dict = Depends(filters)):
+    return db.analytics("customer_data", f)
+
+
+@api.get("/tables/{table}/delete-all-status")
+def delete_all_status(table: str, user: dict = Depends(require_user)):
+    return {"used": db.is_delete_all_used(table)}
+
+
+@api.post("/tables/{table}/delete-all")
+def delete_all_table_data(table: str, request: Request, user: dict = Depends(require_user)):
+    try:
+        return db.delete_all_data_once(table, user_id=user["id"], ip_info=who(request))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ---- fetch / add one provider
 @api.get("/tables/{table}/rows")                                # FETCH
 def fetch_rows(table: str, f: dict = Depends(filters), sort: str = "", desc: bool = True, limit: int = 100, offset: int = 0):
@@ -274,6 +293,28 @@ def fetch_rows(table: str, f: dict = Depends(filters), sort: str = "", desc: boo
 
 @api.post("/tables/{table}/rows", status_code=201)              # ADD
 def add_row(table: str, data: Dict[str, Any] = Body(...)): return db.insert_row(table, data)
+
+
+class BatchDeletePayload(BaseModel):
+    ids: List[Any]
+
+
+@api.delete("/tables/{table}/rows/{row_id}")
+def delete_single_row(table: str, row_id: str, request: Request, user: dict = Depends(require_user)):
+    try:
+        return db.delete_row(table, row_id, user_id=user["id"], ip_info=who(request))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@api.post("/tables/{table}/rows/delete-batch")
+def delete_batch_rows(table: str, payload: BatchDeletePayload, request: Request, user: dict = Depends(require_user)):
+    try:
+        return db.delete_rows(table, payload.ids, user_id=user["id"], ip_info=who(request))
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 
 # ---- bulk upload (single table, sheet name = provider, table row = customer)
@@ -349,6 +390,24 @@ def all_rows(f: dict = Depends(filters), sort: str = "", desc: bool = True, limi
 @api.get("/all/export")
 def all_export(f: dict = Depends(filters), sort: str = "", desc: bool = True, cols: str = ""):
     return _xlsx("All providers", db.search_all(f, sort, desc, 50000, 0), visible_cols=cols)
+
+
+@api.delete("/all/rows/{row_id}")
+def delete_all_single_row(row_id: str, request: Request, user: dict = Depends(require_user)):
+    try:
+        return db.delete_row("customer_data", row_id, user_id=user["id"], ip_info=who(request))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@api.post("/all/rows/delete-batch")
+def delete_all_batch_rows(payload: BatchDeletePayload, request: Request, user: dict = Depends(require_user)):
+    try:
+        return db.delete_rows("customer_data", payload.ids, user_id=user["id"], ip_info=who(request))
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 
 app.include_router(api)

@@ -21,8 +21,24 @@ const S = {
   prov: '',
   cust: '',
   customers: [],
-  providers: []
+  providers: [],
+  filters: {}
 };
+
+/* Core 10 columns requested by user for the Excel data view */
+const CORE_COLUMNS = [
+  { key: 'provider', label: 'Provider *', dbCols: ['provider'], kind: 'provider' },
+  { key: 'date', label: 'Date *', dbCols: ['date'], kind: 'date' },
+  { key: 'customer', label: 'Customer Name *', dbCols: ['customer', 'customer name'], kind: 'customer' },
+  { key: 'Request ID', label: 'Request ID', dbCols: ['Request ID', 'request_id', 'Request_ID'], kind: 'text' },
+  { key: 'Quantity', label: 'Quantity *', dbCols: ['Quantity', 'qty', 'QUANTITY'], kind: 'number' },
+  { key: 'plan', label: 'Plan *(months / time duration)', dbCols: ['plan', 'PLAN'], durationCols: ['MONTHS', 'Month', 'months'], kind: 'text' },
+  { key: 'PROFILE', label: 'Profile', dbCols: ['PROFILE', 'profile'], kind: 'text' },
+  { key: 'Product', label: 'Product', dbCols: ['Product', 'product'], kind: 'text' },
+  { key: 'REQUESTED BY', label: 'Requested By', dbCols: ['REQUESTED BY', 'requested_by', 'Requested By'], kind: 'text' },
+  { key: 'RAISED BY', label: 'Raised By', dbCols: ['RAISED BY', 'raised_by', 'Raised By'], kind: 'text' }
+];
+const CORE_COL_KEYS = CORE_COLUMNS.map(c => c.key);
 
 const colsKey = () => 'sim-visible-cols:' + (S.cur || '');
 function getStoredCols() {
@@ -38,10 +54,9 @@ const rowsUrl = t => t == ALL ? '/api/all' : `/api/tables/${enc(t)}`;
 
 /* ---------- backend URL detection (Netlify + Render support) ---------- */
 const RENDER_BACKEND_URL = 'https://sim-provider-1f4c.onrender.com';
-const isNetlify = window.location.hostname.includes('netlify.app') || window.location.hostname.includes('netlify');
-const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-// If window.API_BASE is set, use it. If on Netlify and window.USE_NETLIFY_PROXY is not true, use RENDER_BACKEND_URL
-const API_BASE = window.API_BASE !== undefined ? window.API_BASE : (isLocal ? '' : (isNetlify ? RENDER_BACKEND_URL : ''));
+// Default to relative '' so Netlify's _redirects proxy handles /api/* without CORS or preflight issues.
+// Can be overridden with window.API_BASE = 'https://sim-provider-1f4c.onrender.com' if direct calls are desired.
+const API_BASE = window.API_BASE !== undefined ? window.API_BASE : '';
 const apiUrl = u => (u.startsWith('http://') || u.startsWith('https://')) ? u : (API_BASE + u);
 
 const getToken = () => { try { return localStorage.getItem('vi-token') || ''; } catch (e) { return ''; } };
@@ -56,7 +71,16 @@ async function api(u, o = {}) {
   if (o.body && typeof o.body != 'string') {
     o = {...o, body: JSON.stringify(o.body)};
   }
-  const r = await fetch(apiUrl(u), {credentials: 'include', ...o, headers}), d = await r.json().catch(() => ({}));
+  let r, d = {};
+  try {
+    r = await fetch(apiUrl(u), {credentials: 'include', ...o, headers});
+    d = await r.json().catch(() => ({}));
+  } catch (err) {
+    if (err && err.message && err.message.toLowerCase().includes('fetch')) {
+      throw Error('Cannot connect to backend server. If the server is waking up from sleep, please wait 15 seconds and try again.');
+    }
+    throw err;
+  }
   if (r.status == 401 && u != '/api/login') {
     setToken('');
     showLogin('Your session ended. Please sign in again.');
@@ -66,6 +90,7 @@ async function api(u, o = {}) {
   return d;
 }
 const post = (u, body) => api(u, {method: 'POST', body});
+const del = (u, body) => api(u, {method: 'DELETE', body});
 const toast = (m, bad) => { const t = $('#toast'); t.textContent = m; t.className = 'show' + (bad ? ' bad' : ''); clearTimeout(toast.t); toast.t = setTimeout(() => t.className = '', Math.max(3200, m.length * 45)) };
 const fail = e => e.silent || toast(e.message, 1);
 
@@ -77,7 +102,91 @@ function setTheme(t, save) {
   $('#themeMenu').innerHTML = THEMES.map(([id, name, c1, c2]) => `<button class="sw ${id == t ? 'on' : ''}" data-th="${id}" role="menuitem"><i style="--c1:${c1};--c2:${c2}"></i>${name}${id == t ? '<small>✓</small>' : ''}</button>`).join('');
   bg.color(); bg.redraw();
 }
-$('#themeBtn').onclick = e => { e.stopPropagation(); $('#themeMenu').classList.toggle('hide') };
+function initDraggableThemer() {
+  const themer = $('#themer') || $('.themer');
+  const btn = $('#themeBtn');
+  if (!themer || !btn) return;
+
+  btn.style.cursor = 'grab';
+
+  // Restore saved position if present
+  try {
+    const saved = localStorage.getItem('themer-pos');
+    if (saved) {
+      const {left, top} = JSON.parse(saved);
+      const maxL = window.innerWidth - themer.offsetWidth - 10;
+      const maxT = window.innerHeight - themer.offsetHeight - 10;
+      themer.style.left = Math.max(10, Math.min(maxL, left)) + 'px';
+      themer.style.top = Math.max(10, Math.min(maxT, top)) + 'px';
+      themer.style.right = 'auto';
+      themer.style.bottom = 'auto';
+    }
+  } catch (e) {}
+
+  let isDragging = false, hasMoved = false;
+  let startX = 0, startY = 0, initL = 0, initT = 0;
+
+  btn.onpointerdown = e => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    isDragging = true;
+    hasMoved = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    const r = themer.getBoundingClientRect();
+    initL = r.left;
+    initT = r.top;
+    btn.setPointerCapture(e.pointerId);
+    btn.style.cursor = 'grabbing';
+  };
+
+  btn.onpointermove = e => {
+    if (!isDragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!hasMoved && Math.hypot(dx, dy) > 4) {
+      hasMoved = true;
+      themer.classList.add('dragging');
+      $('#themeMenu').classList.add('hide');
+    }
+    if (hasMoved) {
+      const maxL = window.innerWidth - themer.offsetWidth - 10;
+      const maxT = window.innerHeight - themer.offsetHeight - 10;
+      const newL = Math.max(10, Math.min(maxL, initL + dx));
+      const newT = Math.max(10, Math.min(maxT, initT + dy));
+      themer.style.left = newL + 'px';
+      themer.style.top = newT + 'px';
+      themer.style.right = 'auto';
+      themer.style.bottom = 'auto';
+    }
+  };
+
+  const endDrag = e => {
+    if (!isDragging) return;
+    isDragging = false;
+    btn.style.cursor = 'grab';
+    themer.classList.remove('dragging');
+    try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
+    if (hasMoved) {
+      const r = themer.getBoundingClientRect();
+      try {
+        localStorage.setItem('themer-pos', JSON.stringify({left: r.left, top: r.top}));
+      } catch (err) {}
+    }
+  };
+
+  btn.onpointerup = endDrag;
+  btn.onpointercancel = endDrag;
+
+  btn.onclick = e => {
+    e.stopPropagation();
+    if (hasMoved) {
+      hasMoved = false;
+      return;
+    }
+    $('#themeMenu').classList.toggle('hide');
+  };
+}
+initDraggableThemer();
 $('#themeMenu').onclick = e => { const b = e.target.closest('[data-th]'); if (b) { setTheme(b.dataset.th, true); $('#themeMenu').classList.add('hide') } };
 document.addEventListener('click', e => { if (!e.target.closest('.themer')) $('#themeMenu').classList.add('hide') });
 document.addEventListener('keydown', e => e.key == 'Escape' && $('#themeMenu').classList.add('hide'));
@@ -275,9 +384,13 @@ function renderChips() {
 const pick = async e => {
   const pBtn = e.target.closest('[data-prov]');
   if (pBtn) {
-    S.prov = pBtn.dataset.prov || '';
-    if ($('#fProv')) $('#fProv').value = S.prov;
+    const p = pBtn.dataset.prov || '';
+    S.prov = p;
+    if (p) S.filters.provider = p;
+    else delete S.filters.provider;
     renderChips();
+    renderFilterPills();
+    renderHead();
     S.off = 0;
     await load();
     return;
@@ -286,8 +399,10 @@ const pick = async e => {
   if (tBtn && tBtn.dataset.t && tBtn.dataset.t != S.cur) {
     S.cur = tBtn.dataset.t;
     S.prov = '';
+    S.filters = {};
     await loadProviders();
     renderChips();
+    renderFilterPills();
     await selectTable(S.cur);
   }
 };
@@ -298,18 +413,31 @@ $$('.subnav button').forEach(b => b.onclick = () => {
   ['fetch', 'add'].forEach(id => $('#' + id).classList.toggle('hide', id != b.dataset.t)) });
 
 /* ---------- one provider (or all): columns are read from MySQL ---------- */
+function getDefaultCoreCols() {
+  const allCols = S.allColNames || [];
+  const matches = [];
+  CORE_COLUMNS.forEach(c => {
+    const found = allCols.find(col => 
+      c.dbCols.some(dbCol => dbCol.toLowerCase() === col.toLowerCase()) || 
+      c.key.toLowerCase() === col.toLowerCase()
+    );
+    if (found && !matches.includes(found)) matches.push(found);
+  });
+  return matches.length >= 4 ? matches : allCols;
+}
+
 async function selectTable(name) {
   const all = name == ALL;
   S.cols = await api(rowsUrl(name) + '/columns');
   S.allColNames = S.cols.map(c => c.name);
 
-  // Restore stored visible columns or default to all
+  // Restore stored visible columns or default to the 10 Core columns
   const stored = getStoredCols();
   if (stored && Array.isArray(stored) && stored.length > 0) {
     const valid = stored.filter(c => S.allColNames.includes(c));
-    S.visibleCols = valid.length ? new Set(valid) : new Set(S.allColNames);
+    S.visibleCols = valid.length ? new Set(valid) : new Set(getDefaultCoreCols());
   } else {
-    S.visibleCols = new Set(S.allColNames);
+    S.visibleCols = new Set(getDefaultCoreCols());
   }
 
   S.pcol = all ? (S.cols.find(c => c.provider) || {}).name || '' : '';
@@ -317,8 +445,9 @@ async function selectTable(name) {
   S.dcol = S.cols.find(c => ['date', 'datetime', 'date_text'].includes(c.kind)) || null;
   $('#addAll').classList.toggle('hide', !all); $('#form').classList.toggle('hide', all);
   if (all) $('#addPick').innerHTML = S.tables.map(t => `<button class="chip" data-t="${esc(t.name)}">${esc(t.name)}</button>`).join('');
-  buildFilters();
+  renderFilterPills();
   renderColPickerUI();
+  checkDeleteAllStatus(name);
   await Promise.all([load(), all ? 0 : buildForm()]);
 }
 
@@ -347,12 +476,15 @@ function renderColPickerUI() {
     return;
   }
   const isChecked = c => !S.visibleCols || S.visibleCols.has(c);
-  list.innerHTML = allCols.map(c => `
-    <label class="col-picker-item">
-      <input type="checkbox" data-col="${esc(c)}" ${isChecked(c) ? 'checked' : ''}>
-      <span title="${esc(c)}">${esc(c)}</span>
-    </label>
-  `).join('');
+  list.innerHTML = allCols.map(c => {
+    const label = getColLabel(c);
+    return `
+      <label class="col-picker-item">
+        <input type="checkbox" data-col="${esc(c)}" ${isChecked(c) ? 'checked' : ''}>
+        <span title="${esc(c)}">${esc(label)} ${label !== c ? `<small style="color:var(--mut)">(${esc(c)})</small>` : ''}</span>
+      </label>
+    `;
+  }).join('');
   updateColBadge();
 }
 
@@ -395,9 +527,8 @@ function initColPicker() {
 
   if (selDef) {
     selDef.onclick = () => {
-      const defCandidates = ['customer', 'provider', 'date', 'plan', 'qty', 'quantity', 'amount', 'status', 'mobile_number', 'sim_number', 'product'];
-      const defCols = S.allColNames.filter(c => defCandidates.includes(c.toLowerCase()));
-      S.visibleCols = new Set(defCols.length ? defCols : S.allColNames);
+      const coreCols = getDefaultCoreCols();
+      S.visibleCols = new Set(coreCols);
       saveStoredCols([...S.visibleCols]);
       renderColPickerUI();
       renderCurrentTable();
@@ -448,112 +579,977 @@ function initColPicker() {
 }
 initColPicker();
 
-/* ---------- FETCH ---------- */
-function buildFilters() {
-  $('#filters').innerHTML = `<label>Search<input id="fQ" placeholder="Search every column…"></label>` +
-    `<label>Provider<select id="fProv">
-      <option value="">All Data</option>
-      ${provNames().map(p => `<option value="${esc(p)}" ${S.prov == p ? 'selected' : ''}>${esc(p)}</option>`).join('')}
-    </select></label>` +
-    (S.dcol ? `<label>${esc(S.dcol.name)} from<input type="date" id="fFrom"></label><label>${esc(S.dcol.name)} to<input type="date" id="fTo"></label>` : '') +
-    `<label>Requested by<input id="fReqBy" list="dlReqBy" placeholder="Filter by requested by…"><datalist id="dlReqBy"></datalist></label>` +
-    `<label>Raised by<input id="fRaisedBy" list="dlRaisedBy" placeholder="Filter by raised by…"><datalist id="dlRaisedBy"></datalist></label>`;
-  if ($('#fProv')) {
-    $('#fProv').onchange = () => { S.prov = $('#fProv').value; S.off = 0; renderChips(); load() };
-  }
-  loadFilterDatalists();
+/* ---------- COLUMN HELPERS & LABELS ---------- */
+function getColLabel(colName) {
+  const match = CORE_COLUMNS.find(c => 
+    c.key.toLowerCase() === colName.toLowerCase() || 
+    c.dbCols.some(dbCol => dbCol.toLowerCase() === colName.toLowerCase())
+  );
+  return match ? match.label : colName;
+}
 
-  let searchDebounceTimer = null;
-  const triggerDebounce = () => {
-    clearTimeout(searchDebounceTimer);
-    searchDebounceTimer = setTimeout(() => {
-      S.off = 0;
-      load();
-    }, 350);
-  };
+function isColFiltered(colName) {
+  const cn = colName.toLowerCase();
+  if (cn === 'provider') return !!(S.filters.provider || S.prov);
+  if (cn === 'date') return !!(S.filters.date_from || S.filters.date_to);
+  if (cn === 'customer' || cn === 'customer name') return !!S.filters.customer;
+  if (cn === 'requested by' || cn === 'requested_by') return !!(S.filters['REQUESTED BY'] || S.filters.requested_by);
+  if (cn === 'raised by' || cn === 'raised_by') return !!(S.filters['RAISED BY'] || S.filters.raised_by);
+  return !!S.filters[colName];
+}
 
-  const fQ = $('#fQ');
-  if (fQ) fQ.oninput = triggerDebounce;
+function isNumericCol(colName) {
+  const kind = (S.cols.find(x => x.name.toLowerCase() === colName.toLowerCase()) || {}).kind;
+  return ['int', 'decimal'].includes(kind) || NUMCOL.test(colName);
+}
 
-  const fReqBy = $('#fReqBy');
-  if (fReqBy) {
-    fReqBy.oninput = triggerDebounce;
-    fReqBy.onchange = () => { S.off = 0; load(); };
-  }
-
-  const fRaisedBy = $('#fRaisedBy');
-  if (fRaisedBy) {
-    fRaisedBy.oninput = triggerDebounce;
-    fRaisedBy.onchange = () => { S.off = 0; load(); };
-  }
-
-  if ($('#fFrom')) $('#fFrom').onchange = () => { S.off = 0; load(); };
-  if ($('#fTo')) $('#fTo').onchange = () => { S.off = 0; load(); };
-
-  $$('#filters input,#filters select').forEach(i => i.onkeydown = e => {
-    if (e.key == 'Enter') {
-      clearTimeout(searchDebounceTimer);
-      $('#go').click();
+function getColsToRender() {
+  const allCols = S.allColNames || [];
+  if (!S.visibleCols || S.visibleCols.size === 0) return allCols;
+  const visible = [];
+  CORE_COLUMNS.forEach(c => {
+    const found = allCols.find(col => 
+      S.visibleCols.has(col) && (
+        c.dbCols.some(dbCol => dbCol.toLowerCase() === col.toLowerCase()) || 
+        c.key.toLowerCase() === col.toLowerCase()
+      )
+    );
+    if (found && !visible.includes(found)) visible.push(found);
+  });
+  allCols.forEach(col => {
+    if (S.visibleCols.has(col) && !visible.includes(col)) {
+      visible.push(col);
     }
   });
+  return visible.length > 0 ? visible : allCols;
 }
 
-async function loadFilterDatalists() {
-  try {
-    const r = await api(`${rowsUrl(S.cur)}/values?column=${enc('REQUESTED BY')}`).catch(() => ({values: []}));
-    if ($('#dlReqBy') && r.values) {
-      $('#dlReqBy').innerHTML = r.values.map(v => `<option value="${esc(v)}">`).join('');
+function renderCellValue(r, colKey) {
+  const cn = colKey.toLowerCase();
+  if (cn === 'provider') {
+    const val = r.provider || r.PROVIDER || '';
+    return val ? `<span class="tag" style="font-weight:600">${esc(val)}</span>` : '—';
+  }
+  if (cn === 'date') {
+    const val = r.date || r.DATE || '';
+    return esc(val ? String(val).substring(0, 10) : '—');
+  }
+  if (cn === 'customer' || cn === 'customer name') {
+    const val = r.customer || r.CUSTOMER || r['customer name'] || '';
+    return val ? `<span class="tag" style="background:rgba(var(--arg),.1);color:var(--tx)">${esc(val)}</span>` : '—';
+  }
+  if (cn === 'request id' || cn === 'request_id') {
+    return esc(r['Request ID'] ?? r['request_id'] ?? r.request_id ?? '—');
+  }
+  if (cn === 'quantity' || cn === 'qty') {
+    const q = r.Quantity ?? r.qty ?? r.QUANTITY ?? r.Qty;
+    return q !== null && q !== undefined ? `<b>${fmt(q)}</b>` : '—';
+  }
+  if (cn === 'plan' || cn.startsWith('plan')) {
+    const p = r.plan ?? r.PLAN ?? '';
+    const dur = r.MONTHS ?? r.Month ?? r.months ?? '';
+    if (p && dur && !String(p).toLowerCase().includes(String(dur).toLowerCase())) {
+      return `${esc(p)} <span class="tag" style="font-size:10px">${esc(dur)} mo</span>`;
     }
-  } catch (e) {}
-  try {
-    const r = await api(`${rowsUrl(S.cur)}/values?column=${enc('RAISED BY')}`).catch(() => ({values: []}));
-    if ($('#dlRaisedBy') && r.values) {
-      $('#dlRaisedBy').innerHTML = r.values.map(v => `<option value="${esc(v)}">`).join('');
-    }
-  } catch (e) {}
+    return esc(p || dur || '—');
+  }
+  if (cn === 'profile') {
+    return esc(r.PROFILE ?? r.profile ?? '—');
+  }
+  if (cn === 'product') {
+    return esc(r.Product ?? r.product ?? '—');
+  }
+  if (cn === 'requested by' || cn === 'requested_by') {
+    return esc(r['REQUESTED BY'] ?? r.requested_by ?? '—');
+  }
+  if (cn === 'raised by' || cn === 'raised_by') {
+    return esc(r['RAISED BY'] ?? r.raised_by ?? '—');
+  }
+
+  const val = r[colKey];
+  if (val === null || val === undefined || val === '') return '—';
+  if (['amount', 'total', 'price', 'cost'].includes(cn)) {
+    return '₹ 0';
+  }
+  return esc(val);
 }
 
+/* ---------- ACTIVE FILTER PILLS ---------- */
+function renderFilterPills() {
+  const pillsEl = $('#filterPills');
+  if (!pillsEl) return;
+  const pills = [];
+
+  const pVal = S.filters.provider || S.prov;
+  if (pVal && pVal.toLowerCase() !== 'all data' && pVal !== '') {
+    pills.push(`
+      <span class="filter-pill">
+        <span>📶 Provider: <b>${esc(pVal)}</b></span>
+        <button type="button" data-clear-pill="provider" title="Clear provider filter">✕</button>
+      </span>
+    `);
+  }
+
+  if (S.filters.customer) {
+    pills.push(`
+      <span class="filter-pill">
+        <span>👤 Customer: <b>${esc(S.filters.customer)}</b></span>
+        <button type="button" data-clear-pill="customer" title="Clear customer filter">✕</button>
+      </span>
+    `);
+  }
+
+  if (S.filters.date_from || S.filters.date_to) {
+    const rangeText = (S.filters.date_from || '…') + ' to ' + (S.filters.date_to || '…');
+    pills.push(`
+      <span class="filter-pill">
+        <span>📅 Date: <b>${esc(rangeText)}</b></span>
+        <button type="button" data-clear-pill="date" title="Clear date filter">✕</button>
+      </span>
+    `);
+  }
+
+  for (const [k, v] of Object.entries(S.filters)) {
+    if (!v || ['provider', 'customer', 'date_from', 'date_to'].includes(k)) continue;
+    const label = getColLabel(k);
+    pills.push(`
+      <span class="filter-pill">
+        <span>${esc(label)}: <b>${esc(v)}</b></span>
+        <button type="button" data-clear-pill="${esc(k)}" title="Clear ${esc(label)} filter">✕</button>
+      </span>
+    `);
+  }
+
+  pillsEl.innerHTML = pills.join('');
+}
+
+if ($('#filterPills')) {
+  $('#filterPills').onclick = e => {
+    const btn = e.target.closest('[data-clear-pill]');
+    if (!btn) return;
+    const key = btn.dataset.clearPill;
+    if (key === 'provider') {
+      delete S.filters.provider;
+      S.prov = '';
+      renderChips();
+    } else if (key === 'date') {
+      delete S.filters.date_from;
+      delete S.filters.date_to;
+    } else {
+      delete S.filters[key];
+    }
+    S.off = 0;
+    renderFilterPills();
+    renderHead();
+    load();
+  };
+}
+
+/* ---------- QUERY PARAMETERS ---------- */
 function params(paging = true) {
-  const p = {q: $('#fQ').value.trim(), sort: S.sort, desc: S.desc};
-  const provVal = $('#fProv') ? $('#fProv').value : S.prov;
-  if (provVal && provVal.trim().toLowerCase() != 'all data') p.provider = provVal.trim();
-  if (S.dcol && $('#fFrom') && $('#fTo')) {
-    p.date_col = S.dcol.name;
-    p.date_from = $('#fFrom').value;
-    p.date_to = $('#fTo').value;
+  const p = { sort: S.sort, desc: S.desc };
+
+  const provVal = S.filters.provider || S.prov;
+  if (provVal && provVal.trim().toLowerCase() !== 'all data' && provVal.trim() !== '') {
+    p.provider = provVal.trim();
   }
-  if ($('#fReqBy') && $('#fReqBy').value.trim()) {
-    p.requested_by = $('#fReqBy').value.trim();
+
+  if (S.filters.customer) {
+    p.customer = S.filters.customer.trim();
   }
-  if ($('#fRaisedBy') && $('#fRaisedBy').value.trim()) {
-    p.raised_by = $('#fRaisedBy').value.trim();
+
+  if (S.filters.date_from || S.filters.date_to) {
+    p.date_col = (S.dcol ? S.dcol.name : 'date');
+    if (S.filters.date_from) p.date_from = S.filters.date_from;
+    if (S.filters.date_to) p.date_to = S.filters.date_to;
   }
+
+  const reqBy = S.filters['REQUESTED BY'] || S.filters.requested_by;
+  if (reqBy) p.requested_by = reqBy.trim();
+
+  const raisedBy = S.filters['RAISED BY'] || S.filters.raised_by;
+  if (raisedBy) p.raised_by = raisedBy.trim();
+
+  for (const [k, v] of Object.entries(S.filters)) {
+    if (v === '' || v === undefined || v === null) continue;
+    const lk = k.toLowerCase();
+    if (['provider', 'customer', 'date_from', 'date_to', 'requested by', 'requested_by', 'raised by', 'raised_by'].includes(lk)) continue;
+    p['cf_' + k] = String(v).trim();
+  }
+
   const limit = S.pageSize || PAGE;
-  if (paging) { p.limit = limit; p.offset = S.off }
-  if (S.visibleCols && S.allColNames && S.visibleCols.size < S.allColNames.length) {
-    p.cols = [...S.visibleCols].join(',');
+  if (paging) {
+    p.limit = limit;
+    p.offset = S.off;
   }
+
   return new URLSearchParams(Object.entries(p).filter(([, v]) => v !== '' && v !== undefined)).toString();
 }
 
+/* ---------- TABLE HEADER & BODY RENDERING ---------- */
+function renderHead() {
+  const cols = getColsToRender();
+  const html = cols.map(c => {
+    const label = getColLabel(c);
+    const filtered = isColFiltered(c);
+    const sorted = S.sort && S.sort.toLowerCase() === c.toLowerCase();
+    const sortIcon = sorted ? (S.desc ? ' ↓' : ' ↑') : '';
+    const num = isNumericCol(c);
+
+    return `
+      <th class="excel-th ${filtered ? 'col-filtered' : ''} ${sorted ? 'sorted' : ''} ${num ? 'num' : ''}" data-k="${esc(c)}">
+        <div class="excel-th-wrap">
+          <span class="excel-th-text" data-sort-col="${esc(c)}" title="Click to sort by ${esc(label)}">${esc(label)}</span>
+          <span class="excel-th-sort" data-sort-col="${esc(c)}">${sortIcon}</span>
+          <button type="button" class="excel-filter-btn ${filtered ? 'active' : ''}" data-filter-col="${esc(c)}" title="Filter column ${esc(label)}" aria-label="Filter ${esc(label)}">
+            <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor">
+              <path d="M1.5 2h13l-5.2 6.2v4.8l-2.6 1.5v-6.3L1.5 2z"/>
+            </svg>
+          </button>
+        </div>
+      </th>
+    `;
+  }).join('');
+
+  const actTh = `<th class="excel-th" style="width:48px;text-align:center" title="Actions"></th>`;
+  $('#head').innerHTML = `<tr>${html}${actTh}</tr>`;
+}
+
+function renderBody(d) {
+  const cols = getColsToRender();
+  if (!d.rows || d.rows.length === 0) {
+    $('#body').innerHTML = `<tr><td colspan="${cols.length + 1}" style="text-align:center;padding:36px;color:var(--mut)">No records match the current filters.</td></tr>`;
+    return;
+  }
+  const html = d.rows.map(r => {
+    const rowId = r.id ?? r._row_id ?? r.ID ?? '';
+    const cells = cols.map(c => {
+      const num = isNumericCol(c);
+      return `<td class="${num ? 'num' : ''}" data-col-key="${esc(c.toLowerCase())}">${renderCellValue(r, c)}</td>`;
+    }).join('');
+    const actTd = `
+      <td class="tbl-action-cell" style="text-align:center">
+        <button type="button" class="tbl-del-btn" data-del-id="${esc(rowId)}" title="Delete record #${esc(rowId)}" aria-label="Delete record #${esc(rowId)}">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </button>
+      </td>
+    `;
+    return `<tr data-row-id="${esc(rowId)}">${cells}${actTd}</tr>`;
+  }).join('');
+  $('#body').innerHTML = html;
+}
+
+function renderStats(d) {
+  const statsEl = $('#stats');
+  if (!statsEl) return;
+
+  let totalQty = 0;
+  (d.sums || []).forEach(s => {
+    const col = (s.column || '').toLowerCase();
+    const val = Number(s.sum || 0);
+    if (col === 'qty' || col === 'quantity') {
+      totalQty += val;
+    }
+  });
+
+  const cards = [];
+  const todayStr = new Date().toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric'});
+
+  // 1. Total Records Count (Live count updated from today)
+  const countLabel = S.prov ? `Filtered Records (${S.prov})` : 'Total Records (Count)';
+  cards.push(`
+    <div class="card stat tilt" data-tilt="10" style="border-top:3px solid var(--a)">
+      <b>${fmt(d.total)}</b>
+      <span>📊 ${esc(countLabel)}</span>
+      <small style="display:block;font-size:11px;color:var(--mut);margin-top:4px">🟢 Count updated from today (${todayStr})</small>
+    </div>
+  `);
+
+  // 2. Today's Activations Count
+  const todayCount = d.today_count ?? 0;
+  cards.push(`
+    <div class="card stat tilt" data-tilt="10" style="border-top:3px solid #f59e0b">
+      <b style="color:#d97706">${fmt(todayCount)}</b>
+      <span>📅 Today's Activations</span>
+      <small style="display:block;font-size:11px;color:var(--mut);margin-top:4px">New entries added today</small>
+    </div>
+  `);
+
+  // 3. Total Amount: STRICTLY 0 as requested by user ("the amount should be 0 Total Amount should be 0")
+  cards.push(`
+    <div class="card stat tilt" data-tilt="10" style="border-top:3px solid #10b981">
+      <b style="color:#059669">₹ 0</b>
+      <span>💰 Total Amount</span>
+      <small style="display:block;font-size:11px;color:var(--mut);margin-top:4px">Fixed at 0 per configuration</small>
+    </div>
+  `);
+
+  // 4. Total Quantity
+  cards.push(`
+    <div class="card stat tilt" data-tilt="10" style="border-top:3px solid #6366f1">
+      <b style="color:#4f46e5">${fmt(totalQty)}</b>
+      <span>📶 Total Quantity</span>
+      <small style="display:block;font-size:11px;color:var(--mut);margin-top:4px">Active SIM cards</small>
+    </div>
+  `);
+
+  statsEl.innerHTML = cards.join('');
+  statsEl.style.gridTemplateColumns = `repeat(4, 1fr)`;
+}
+
+/* ---------- INTERACTIVE PIE CHARTS (ACTIVATION % PER MONTH & PROFILE RATIO) ---------- */
+const PIE_COLORS = [
+  '#4f46e5', '#0284c7', '#10b981', '#f59e0b', '#ec4899',
+  '#8b5cf6', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+  '#14b8a6', '#e11d48', '#3b82f6', '#a855f7'
+];
+
+/* ---------- RESET PIE CHARTS TO DEFAULT REPRESENTATION ---------- */
+function goDefaultMonth() {
+  delete S.filters.date_from;
+  delete S.filters.date_to;
+  S.off = 0;
+  renderFilterPills();
+  renderHead();
+  load();
+  toast('Returned monthly chart to default representation as at login ✔');
+}
+
+function goDefaultProfile() {
+  delete S.filters.PROFILE;
+  delete S.filters.profile;
+  S.off = 0;
+  renderFilterPills();
+  renderHead();
+  load();
+  toast('Returned profile chart to default representation as at login ✔');
+}
+
+function goDefaultAllCharts() {
+  delete S.filters.date_from;
+  delete S.filters.date_to;
+  delete S.filters.PROFILE;
+  delete S.filters.profile;
+  S.off = 0;
+  renderFilterPills();
+  renderHead();
+  load();
+  toast('Returned all charts to default representation as at login ✔');
+}
+
+function drawDonutChart(svgEl, data, centerLabelEl, centerSubEl, totalCenterText, centerSubText, activeKey, onSelect) {
+  if (!svgEl) return;
+  const total = data.reduce((acc, d) => acc + (d.count || 0), 0);
+  if (!total || data.length === 0) {
+    svgEl.innerHTML = `<circle cx="100" cy="100" r="62" fill="none" stroke="var(--line)" stroke-width="26"/>`;
+    if (centerLabelEl) centerLabelEl.textContent = '0';
+    if (centerSubEl) centerSubEl.textContent = 'None';
+    return;
+  }
+
+  const cx = 100, cy = 100, r = 74, innerR = 48;
+  const rad = Math.PI / 180;
+  let curAngle = -90;
+  let paths = [];
+
+  data.forEach((item, idx) => {
+    const sliceAngle = (item.count / total) * 360;
+    const startAngle = curAngle;
+    const endAngle = curAngle + sliceAngle;
+    curAngle = endAngle;
+
+    const color = item.color || PIE_COLORS[idx % PIE_COLORS.length];
+    const itemKey = String(item.key || item.ym || item.label || item.type || '');
+    const isSelected = !!(activeKey && (
+      itemKey.toLowerCase() === String(activeKey).toLowerCase() ||
+      (item.label && item.label.toLowerCase() === String(activeKey).toLowerCase()) ||
+      (item.type && item.type.toLowerCase() === String(activeKey).toLowerCase()) ||
+      (item.ym && item.ym === String(activeKey))
+    ));
+    const titleText = `${item.label || item.type}: ${fmt(item.count)} (${item.pct}%)${isSelected ? ' [Active Filter - Click to Go Default]' : ' (Click to filter)'}`;
+
+    if (sliceAngle >= 359.9) {
+      paths.push(`
+        <circle cx="${cx}" cy="${cy}" r="${(r + innerR) / 2}" fill="none" stroke="${color}" stroke-width="${r - innerR}" class="pie-slice ${isSelected ? 'selected-slice' : ''}" data-pie-key="${esc(itemKey)}">
+          <title>${esc(titleText)}</title>
+        </circle>
+      `);
+      return;
+    }
+
+    const x1 = cx + r * Math.cos(startAngle * rad);
+    const y1 = cy + r * Math.sin(startAngle * rad);
+    const x2 = cx + r * Math.cos(endAngle * rad);
+    const y2 = cy + r * Math.sin(endAngle * rad);
+
+    const x3 = cx + innerR * Math.cos(endAngle * rad);
+    const y3 = cy + innerR * Math.sin(endAngle * rad);
+    const x4 = cx + innerR * Math.cos(startAngle * rad);
+    const y4 = cy + innerR * Math.sin(startAngle * rad);
+
+    const largeArc = sliceAngle > 180 ? 1 : 0;
+    const pathD = `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${x3} ${y3} A ${innerR} ${innerR} 0 ${largeArc} 0 ${x4} ${y4} Z`;
+
+    paths.push(`
+      <path d="${pathD}" fill="${color}" stroke="var(--card)" stroke-width="2" class="pie-slice ${isSelected ? 'selected-slice' : ''}" data-pie-key="${esc(itemKey)}">
+        <title>${esc(titleText)}</title>
+      </path>
+    `);
+  });
+
+  svgEl.innerHTML = paths.join('');
+  if (centerLabelEl) centerLabelEl.textContent = totalCenterText || fmt(total);
+  if (centerSubEl) centerSubEl.textContent = centerSubText || 'Total';
+
+  if (onSelect) {
+    svgEl.onclick = e => {
+      const el = e.target.closest('[data-pie-key]');
+      if (!el) return;
+      onSelect(el.dataset.pieKey);
+    };
+  }
+
+  const centerWrap = centerLabelEl ? centerLabelEl.closest('.pie-center-label') : null;
+  if (centerWrap) {
+    if (activeKey) {
+      centerWrap.classList.add('clickable');
+      centerWrap.title = 'Active filter: click to go default';
+      centerWrap.onclick = () => {
+        if (onSelect) onSelect(activeKey);
+      };
+    } else {
+      centerWrap.classList.remove('clickable');
+      centerWrap.title = '';
+      centerWrap.onclick = null;
+    }
+  }
+}
+
+function renderPieLegend(legendEl, data, onSelect, activeKey) {
+  if (!legendEl) return;
+  if (!data || !data.length) {
+    legendEl.innerHTML = '<div style="font-size:12px;color:var(--mut);padding:8px">No data available</div>';
+    return;
+  }
+
+  legendEl.innerHTML = data.map((item, idx) => {
+    const color = item.color || PIE_COLORS[idx % PIE_COLORS.length];
+    const label = item.label || item.type;
+    const itemKey = String(item.key || item.ym || label);
+    const isSelected = !!(activeKey && (
+      itemKey.toLowerCase() === String(activeKey).toLowerCase() ||
+      label.toLowerCase() === String(activeKey).toLowerCase() ||
+      (item.type && item.type.toLowerCase() === String(activeKey).toLowerCase()) ||
+      (item.ym && item.ym === String(activeKey))
+    ));
+
+    return `
+      <div class="pie-leg-item ${isSelected ? 'active-pie-item' : ''}" data-pie-key="${esc(itemKey)}" title="${isSelected ? 'Active filter: click to go default' : 'Click to filter by ' + esc(label)}">
+        <div class="pie-leg-left">
+          <span class="pie-dot" style="background:${color}"></span>
+          <span class="pie-leg-title">${esc(label)}</span>
+        </div>
+        <div class="pie-leg-right">
+          <span class="pie-leg-pct">${item.pct}%</span>
+          <span class="pie-leg-cnt">${fmt(item.count)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  if (onSelect) {
+    legendEl.onclick = e => {
+      const item = e.target.closest('[data-pie-key]');
+      if (!item) return;
+      onSelect(item.dataset.pieKey);
+    };
+  }
+}
+
+async function loadAnalytics() {
+  try {
+    // Baseline distribution without date & profile filters to preserve full login representation
+    const bp = {};
+    const provVal = S.filters.provider || S.prov;
+    if (provVal && provVal.trim().toLowerCase() !== 'all data' && provVal.trim() !== '') {
+      bp.provider = provVal.trim();
+    }
+    if (S.filters.customer) {
+      bp.customer = S.filters.customer.trim();
+    }
+    const baseQuery = new URLSearchParams(bp).toString();
+    const d = await api(`${rowsUrl(S.cur)}/analytics?${baseQuery}`).catch(() => null);
+    if (!d) return;
+
+    // Detect active month filter
+    let activeMonthKey = '';
+    let activeMonthLabel = '';
+    if (S.filters.date_from && S.filters.date_to) {
+      const fromYm = S.filters.date_from.slice(0, 7);
+      const toYm = S.filters.date_to.slice(0, 7);
+      if (fromYm === toYm) {
+        activeMonthKey = fromYm;
+      }
+    }
+
+    // Detect active profile filter
+    const rawProfile = S.filters.PROFILE || S.filters.profile || '';
+    let activeProfileKey = '';
+    if (rawProfile) {
+      if (rawProfile.toLowerCase().includes('single')) activeProfileKey = 'Single Profile';
+      else if (rawProfile.toLowerCase().includes('dual')) activeProfileKey = 'Dual Profile';
+      else activeProfileKey = rawProfile;
+    }
+
+    // 1. Activation Percentage per Month Pie Chart
+    const monthlyData = (d.monthly || []).map((m, idx) => ({
+      ...m,
+      key: m.ym || m.key,
+      color: PIE_COLORS[idx % PIE_COLORS.length]
+    }));
+    const totalMonthActivations = monthlyData.reduce((acc, m) => acc + m.count, 0);
+
+    const monthBadge = $('#monthChartBadge');
+    const monthDefaultBtn = $('#goDefaultMonthBtn');
+    let monthCenterNumber = fmt(totalMonthActivations);
+    let monthCenterSub = 'Activated';
+
+    if (activeMonthKey) {
+      const matched = monthlyData.find(m => m.key === activeMonthKey || m.ym === activeMonthKey);
+      activeMonthLabel = matched ? (matched.label || activeMonthKey) : activeMonthKey;
+      if (monthBadge) {
+        monthBadge.textContent = 'Filtered: ' + activeMonthLabel;
+        monthBadge.className = 'tag active-pill';
+      }
+      if (monthDefaultBtn) monthDefaultBtn.classList.remove('hide');
+      if (matched) {
+        monthCenterNumber = fmt(matched.count);
+        monthCenterSub = `${activeMonthLabel} · ↩ Default`;
+      }
+    } else {
+      if (monthBadge) {
+        monthBadge.textContent = 'Monthly Share';
+        monthBadge.className = 'tag';
+      }
+      if (monthDefaultBtn) monthDefaultBtn.classList.add('hide');
+    }
+
+    const onMonthSelect = monthKey => {
+      if (activeMonthKey && (monthKey === activeMonthKey || activeMonthKey.includes(monthKey))) {
+        // Toggle back to default
+        goDefaultMonth();
+        return;
+      }
+      if (monthKey && monthKey.includes('-')) {
+        const [y, m] = monthKey.split('-');
+        const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
+        S.filters.date_from = `${monthKey}-01`;
+        S.filters.date_to = `${monthKey}-${String(lastDay).padStart(2, '0')}`;
+        S.off = 0;
+        renderFilterPills();
+        renderHead();
+        load();
+        toast(`Filtered to ${monthKey}. Click '↩ Go Default' anytime to restore default view.`);
+      }
+    };
+
+    drawDonutChart(
+      $('#monthPieSvg'),
+      monthlyData,
+      $('#monthPieTotal'),
+      $('#monthPieCenter span'),
+      monthCenterNumber,
+      monthCenterSub,
+      activeMonthKey,
+      onMonthSelect
+    );
+    renderPieLegend($('#monthPieLegend'), monthlyData, onMonthSelect, activeMonthKey);
+
+    // 2. Single vs Dual Profile Pie Chart
+    const profiles = (d.profiles || []).map(p => ({
+      ...p,
+      key: p.type
+    }));
+    const singleProfile = profiles.find(p => p.type.toLowerCase().includes('single'));
+    const dualProfile = profiles.find(p => p.type.toLowerCase().includes('dual'));
+    const identifiedTotal = (singleProfile ? singleProfile.count : 0) + (dualProfile ? dualProfile.count : 0);
+    let singleRatioText = '0%';
+    if (identifiedTotal > 0 && singleProfile) {
+      singleRatioText = `${Math.round(singleProfile.count / identifiedTotal * 100)}%`;
+    }
+
+    const profBadge = $('#profileChartBadge');
+    const profDefaultBtn = $('#goDefaultProfileBtn');
+    let profCenterNumber = singleRatioText;
+    let profCenterSub = 'Single Share';
+
+    if (activeProfileKey) {
+      if (profBadge) {
+        profBadge.textContent = 'Filtered: ' + activeProfileKey;
+        profBadge.className = 'tag active-pill';
+      }
+      if (profDefaultBtn) profDefaultBtn.classList.remove('hide');
+
+      const isSingle = activeProfileKey.toLowerCase().includes('single');
+      const matchedP = isSingle ? singleProfile : dualProfile;
+      if (matchedP) {
+        profCenterNumber = fmt(matchedP.count);
+        profCenterSub = `${isSingle ? 'Single' : 'Dual'} · ↩ Default`;
+      }
+    } else {
+      if (profBadge) {
+        profBadge.textContent = 'Profile Types';
+        profBadge.className = 'tag';
+      }
+      if (profDefaultBtn) profDefaultBtn.classList.add('hide');
+    }
+
+    const onProfileSelect = profileType => {
+      const isSingle = (profileType || '').toLowerCase().includes('single');
+      const isDual = (profileType || '').toLowerCase().includes('dual');
+      const targetVal = isSingle ? 'Single Profile' : isDual ? 'Dual Profile' : profileType;
+
+      if (activeProfileKey && activeProfileKey.toLowerCase() === targetVal.toLowerCase()) {
+        // Toggle back to default
+        goDefaultProfile();
+        return;
+      }
+      S.filters.PROFILE = targetVal;
+      S.off = 0;
+      renderFilterPills();
+      renderHead();
+      load();
+      toast(`Filtered to ${targetVal}. Click '↩ Go Default' anytime to restore default view.`);
+    };
+
+    drawDonutChart(
+      $('#profilePieSvg'),
+      profiles,
+      $('#profilePieRatio'),
+      $('#profilePieCenter span'),
+      profCenterNumber,
+      profCenterSub,
+      activeProfileKey,
+      onProfileSelect
+    );
+    renderPieLegend($('#profilePieLegend'), profiles, onProfileSelect, activeProfileKey);
+
+    // 3. Overall "Go Default" button in section header
+    const allDefaultBtn = $('#goDefaultAllBtn');
+    if (allDefaultBtn) {
+      allDefaultBtn.classList.toggle('hide', !activeMonthKey && !activeProfileKey);
+    }
+  } catch (e) {
+    console.warn('Analytics error:', e);
+  }
+}
+
+function initChartsToggle() {
+  const btn = $('#toggleChartsBtn');
+  const grid = $('#chartsGrid');
+  const text = $('#toggleChartsText');
+  if (btn && grid && text) {
+    btn.onclick = () => {
+      const isHidden = grid.classList.toggle('hide');
+      text.textContent = isHidden ? 'Show Charts ▼' : 'Hide Charts ▲';
+    };
+  }
+
+  const defMonthBtn = $('#goDefaultMonthBtn');
+  if (defMonthBtn) defMonthBtn.onclick = goDefaultMonth;
+
+  const defProfBtn = $('#goDefaultProfileBtn');
+  if (defProfBtn) defProfBtn.onclick = goDefaultProfile;
+
+  const defAllBtn = $('#goDefaultAllBtn');
+  if (defAllBtn) defAllBtn.onclick = goDefaultAllCharts;
+}
+initChartsToggle();
+
 function renderCurrentTable() {
   if (!S.lastData) return;
-  const d = S.lastData;
-  const allCols = d.columns || S.allColNames || [];
-  const activeCols = allCols.filter(c => !S.visibleCols || S.visibleCols.has(c));
-  const colsToRender = activeCols.length > 0 ? activeCols : allCols;
-
-  const num = c => ['int', 'decimal'].includes((S.cols.find(x => x.name == c) || {}).kind) || NUMCOL.test(c);
-  $('#head').innerHTML = '<tr>' + colsToRender.map(c => `<th data-k="${esc(c)}" class="${num(c) ? 'num' : ''}">${esc(c)}${c == (S.sort || d.pk) ? (S.desc ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
-  const cell = (c, v) => (S.cur == ALL && c == S.pcol) || ['customer', 'provider'].includes(c.toLowerCase()) ? `<span class="tag">${esc(v)}</span>` : esc(v);
-  $('#body').innerHTML = d.rows.map(r => '<tr>' + colsToRender.map(c => `<td class="${num(c) ? 'num' : ''}">${cell(c, r[c])}</td>`).join('') + '</tr>').join('')
-    || `<tr><td colspan="${colsToRender.length || 1}">No records match these filters.</td></tr>`;
-
+  renderHead();
+  renderBody(S.lastData);
   updateColBadge();
 }
 
+/* ---------- MICROSOFT EXCEL FILTER POPOVER ---------- */
+let activeFilterCol = null;
+
+async function openExcelFilter(colKey, btnEl) {
+  const menu = $('#excelFilterMenu');
+  if (!menu) return;
+
+  if (activeFilterCol === colKey && !menu.classList.contains('hide')) {
+    menu.classList.add('hide');
+    activeFilterCol = null;
+    return;
+  }
+
+  activeFilterCol = colKey;
+  const colLabel = getColLabel(colKey);
+  const isDate = colKey.toLowerCase() === 'date' || (S.dcol && S.dcol.name.toLowerCase() === colKey.toLowerCase());
+  const isProv = colKey.toLowerCase() === 'provider';
+  const isNum = isNumericCol(colKey);
+
+  const rect = btnEl.getBoundingClientRect();
+  menu.classList.remove('hide');
+
+  const menuWidth = Math.min(320, window.innerWidth - 20);
+  let left = rect.right - menuWidth;
+  if (left < 10) left = 10;
+  if (left + menuWidth > window.innerWidth - 10) left = window.innerWidth - menuWidth - 10;
+  let top = rect.bottom + 6;
+  if (top + 340 > window.innerHeight) {
+    top = Math.max(10, rect.top - 340);
+  }
+  menu.style.top = top + 'px';
+  menu.style.left = left + 'px';
+
+  let contentHtml = `
+    <div class="excel-fm-head">
+      <strong>Filter: ${esc(colLabel)}</strong>
+      <button type="button" class="btn ghost sm" id="efCloseBtn" style="padding:2px 8px">✕</button>
+    </div>
+
+    <!-- Excel Sort Options -->
+    <div class="excel-fm-sort">
+      <button type="button" id="efSortAsc">
+        <span>${isDate ? '📅 Sort Oldest to Newest' : isNum ? '🔢 Sort Smallest to Largest' : '🔤 Sort A to Z'}</span>
+      </button>
+      <button type="button" id="efSortDesc">
+        <span>${isDate ? '📅 Sort Newest to Oldest' : isNum ? '🔢 Sort Largest to Smallest' : '🔤 Sort Z to A'}</span>
+      </button>
+    </div>
+
+    <div class="excel-fm-divider"></div>
+  `;
+
+  if (isDate) {
+    const curFrom = S.filters.date_from || '';
+    const curTo = S.filters.date_to || '';
+    contentHtml += `
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+        <label style="font-size:12px;margin:0">From date:
+          <input type="date" id="efDateFrom" value="${esc(curFrom)}" style="width:100%;margin-top:2px">
+        </label>
+        <label style="font-size:12px;margin:0">To date:
+          <input type="date" id="efDateTo" value="${esc(curTo)}" style="width:100%;margin-top:2px">
+        </label>
+      </div>
+    `;
+  } else if (isProv) {
+    const curProv = S.filters.provider || S.prov || '';
+    const provs = provNames();
+    contentHtml += `
+      <div class="excel-fm-list" style="max-height:160px">
+        <label class="excel-fm-item">
+          <input type="radio" name="efProvRadio" value="" ${!curProv ? 'checked' : ''}>
+          <span>🌐 All Data</span>
+        </label>
+        ${provs.map(p => `
+          <label class="excel-fm-item">
+            <input type="radio" name="efProvRadio" value="${esc(p)}" ${curProv.toLowerCase() === p.toLowerCase() ? 'checked' : ''}>
+            <span>${esc(p)}</span>
+          </label>
+        `).join('')}
+      </div>
+    `;
+  } else {
+    let curVal = '';
+    if (colKey.toLowerCase() === 'customer' || colKey.toLowerCase() === 'customer name') curVal = S.filters.customer || '';
+    else if (colKey.toLowerCase() === 'requested by' || colKey.toLowerCase() === 'requested_by') curVal = S.filters['REQUESTED BY'] || '';
+    else if (colKey.toLowerCase() === 'raised by' || colKey.toLowerCase() === 'raised_by') curVal = S.filters['RAISED BY'] || '';
+    else curVal = S.filters[colKey] || '';
+
+    contentHtml += `
+      <div class="excel-fm-search">
+        <input type="text" id="efSearchInput" placeholder="Filter by ${esc(colLabel)}…" value="${esc(curVal)}">
+      </div>
+      <div class="excel-fm-list" id="efValuesList">
+        <div style="font-size:11px;color:var(--mut);padding:8px">Loading distinct values…</div>
+      </div>
+    `;
+  }
+
+  contentHtml += `
+    <div class="excel-fm-actions">
+      <button type="button" class="btn ghost sm" id="efClearBtn">Clear Filter</button>
+      <button type="button" class="btn sm" id="efApplyBtn" style="background:var(--a);color:var(--on)">Apply</button>
+    </div>
+  `;
+
+  menu.innerHTML = contentHtml;
+
+  $('#efCloseBtn').onclick = () => {
+    menu.classList.add('hide');
+    activeFilterCol = null;
+  };
+
+  $('#efSortAsc').onclick = () => {
+    S.sort = colKey;
+    S.desc = false;
+    S.off = 0;
+    menu.classList.add('hide');
+    activeFilterCol = null;
+    load();
+  };
+  $('#efSortDesc').onclick = () => {
+    S.sort = colKey;
+    S.desc = true;
+    S.off = 0;
+    menu.classList.add('hide');
+    activeFilterCol = null;
+    load();
+  };
+
+  $('#efClearBtn').onclick = () => {
+    if (isDate) {
+      delete S.filters.date_from;
+      delete S.filters.date_to;
+    } else if (isProv) {
+      delete S.filters.provider;
+      S.prov = '';
+      renderChips();
+    } else if (colKey.toLowerCase() === 'customer' || colKey.toLowerCase() === 'customer name') {
+      delete S.filters.customer;
+    } else if (colKey.toLowerCase() === 'requested by' || colKey.toLowerCase() === 'requested_by') {
+      delete S.filters['REQUESTED BY'];
+      delete S.filters.requested_by;
+    } else if (colKey.toLowerCase() === 'raised by' || colKey.toLowerCase() === 'raised_by') {
+      delete S.filters['RAISED BY'];
+      delete S.filters.raised_by;
+    } else {
+      delete S.filters[colKey];
+    }
+    menu.classList.add('hide');
+    activeFilterCol = null;
+    S.off = 0;
+    renderFilterPills();
+    renderHead();
+    load();
+  };
+
+  $('#efApplyBtn').onclick = () => {
+    if (isDate) {
+      const fromVal = $('#efDateFrom').value;
+      const toVal = $('#efDateTo').value;
+      if (fromVal) S.filters.date_from = fromVal; else delete S.filters.date_from;
+      if (toVal) S.filters.date_to = toVal; else delete S.filters.date_to;
+    } else if (isProv) {
+      const selRadio = menu.querySelector('input[name="efProvRadio"]:checked');
+      const provVal = selRadio ? selRadio.value : '';
+      if (provVal) {
+        S.filters.provider = provVal;
+        S.prov = provVal;
+      } else {
+        delete S.filters.provider;
+        S.prov = '';
+      }
+      renderChips();
+    } else {
+      const checkedBoxes = [...menu.querySelectorAll('.ef-val-check:checked')];
+      const allBoxes = [...menu.querySelectorAll('.ef-val-check')];
+      const searchVal = $('#efSearchInput') ? $('#efSearchInput').value.trim() : '';
+
+      let finalVal = '';
+      if (checkedBoxes.length > 0 && checkedBoxes.length < allBoxes.length) {
+        finalVal = checkedBoxes.map(cb => cb.value).join(',');
+      } else if (searchVal) {
+        finalVal = searchVal;
+      }
+
+      const cn = colKey.toLowerCase();
+      if (cn === 'customer' || cn === 'customer name') {
+        if (finalVal) S.filters.customer = finalVal; else delete S.filters.customer;
+      } else if (cn === 'requested by' || cn === 'requested_by') {
+        if (finalVal) S.filters['REQUESTED BY'] = finalVal; else delete S.filters['REQUESTED BY'];
+      } else if (cn === 'raised by' || cn === 'raised_by') {
+        if (finalVal) S.filters['RAISED BY'] = finalVal; else delete S.filters['RAISED BY'];
+      } else {
+        if (finalVal) S.filters[colKey] = finalVal; else delete S.filters[colKey];
+      }
+    }
+
+    menu.classList.add('hide');
+    activeFilterCol = null;
+    S.off = 0;
+    renderFilterPills();
+    renderHead();
+    load();
+  };
+
+  if (!isDate && !isProv) {
+    const listEl = $('#efValuesList');
+    const searchInput = $('#efSearchInput');
+
+    try {
+      const realCol = S.cols.find(c => c.name.toLowerCase() === colKey.toLowerCase())?.name || colKey;
+      const resp = await api(`${rowsUrl(S.cur)}/values?column=${enc(realCol)}`).catch(() => ({values: []}));
+      const distinctVals = resp.values || [];
+
+      function renderDistinctList(filterTerm = '') {
+        const filteredVals = distinctVals.filter(v => 
+          !filterTerm || String(v).toLowerCase().includes(filterTerm.toLowerCase())
+        );
+        if (!filteredVals.length) {
+          listEl.innerHTML = '<div style="font-size:11px;color:var(--mut);padding:8px">No matching values found</div>';
+          return;
+        }
+        let listHtml = `
+          <label class="excel-fm-item" style="font-weight:600;border-bottom:1px solid var(--line);margin-bottom:4px">
+            <input type="checkbox" id="efSelectAllVals" checked>
+            <span>(Select All)</span>
+          </label>
+        `;
+        listHtml += filteredVals.slice(0, 100).map(v => `
+          <label class="excel-fm-item">
+            <input type="checkbox" class="ef-val-check" value="${esc(v)}" checked>
+            <span title="${esc(v)}">${esc(v)}</span>
+          </label>
+        `).join('');
+        listEl.innerHTML = listHtml;
+
+        const selectAllCb = $('#efSelectAllVals');
+        if (selectAllCb) {
+          selectAllCb.onchange = () => {
+            menu.querySelectorAll('.ef-val-check').forEach(cb => cb.checked = selectAllCb.checked);
+          };
+        }
+      }
+
+      renderDistinctList(searchInput ? searchInput.value.trim() : '');
+
+      if (searchInput) {
+        searchInput.oninput = () => renderDistinctList(searchInput.value.trim());
+        searchInput.onkeydown = e => {
+          if (e.key === 'Enter') {
+            $('#efApplyBtn').click();
+          }
+        };
+      }
+    } catch (e) {
+      if (listEl) listEl.innerHTML = '<div style="font-size:11px;color:var(--mut);padding:8px">Type filter above and click Apply</div>';
+    }
+  }
+}
+
+document.addEventListener('click', e => {
+  const menu = $('#excelFilterMenu');
+  if (menu && !menu.classList.contains('hide')) {
+    if (!e.target.closest('#excelFilterMenu') && !e.target.closest('.excel-filter-btn')) {
+      menu.classList.add('hide');
+      activeFilterCol = null;
+    }
+  }
+});
+
+/* ---------- LOAD DATA ---------- */
 async function load() {
-  const my = S.reqId = (S.reqId || 0) + 1;                       // a slower, older response must not overwrite a newer one
+  const my = S.reqId = (S.reqId || 0) + 1;
   $('#body').style.opacity = .45;
   try {
     const d = await api(`${rowsUrl(S.cur)}/rows?${params()}`);
@@ -562,15 +1558,15 @@ async function load() {
     S.total = d.total;
     if (d.columns && d.columns.length && (!S.allColNames || !S.allColNames.length)) {
       S.allColNames = d.columns;
-      if (!S.visibleCols) S.visibleCols = new Set(S.allColNames);
+      if (!S.visibleCols) S.visibleCols = new Set(getDefaultCoreCols());
       renderColPickerUI();
     }
-    const label = S.prov ? `Records (${S.prov})` : 'All Data Records';
-    $('#stats').innerHTML = [[label, d.total], ...d.sums.map(s => [`Total ${s.column}`, s.sum])]
-      .map(([l, v]) => `<div class="card stat tilt" data-tilt="12"><b>${fmt(v)}</b><span>${esc(l)}</span></div>`).join('');
-    $('#stats').style.gridTemplateColumns = `repeat(${Math.min(d.sums.length + 1, 4)},1fr)`;
 
-    renderCurrentTable();
+    renderStats(d);
+    renderHead();
+    renderBody(d);
+    renderFilterPills();
+    loadAnalytics();
 
     const limit = S.pageSize || PAGE;
     $('#info').textContent = d.total ? `Showing ${S.off + 1}–${Math.min(S.off + limit, d.total)} of ${fmt(d.total)}` : '';
@@ -580,52 +1576,332 @@ async function load() {
   $('#body').style.opacity = 1;
 }
 
-$('#head').onclick = e => { const k = e.target.dataset.k; if (!k) return; S.desc = k == S.sort ? !S.desc : true; S.sort = k; S.off = 0; load() };
+$('#head').onclick = e => {
+  const filterBtn = e.target.closest('.excel-filter-btn');
+  if (filterBtn) {
+    e.stopPropagation();
+    const colKey = filterBtn.dataset.filterCol;
+    openExcelFilter(colKey, filterBtn);
+    return;
+  }
+
+  const sortEl = e.target.closest('[data-sort-col]');
+  if (sortEl) {
+    const k = sortEl.dataset.sortCol;
+    if (!k) return;
+    S.desc = k === S.sort ? !S.desc : true;
+    S.sort = k;
+    S.off = 0;
+    load();
+    return;
+  }
+};
+
 $('#body').onclick = e => {
+  // 1. Delete single entry clicked
+  const delBtn = e.target.closest('.tbl-del-btn');
+  if (delBtn) {
+    e.stopPropagation();
+    const rowId = delBtn.dataset.delId;
+    const tr = delBtn.closest('tr');
+    openDeleteModal(rowId, tr);
+    return;
+  }
+
+  // 2. Tag filter clicked
   const tag = e.target.closest('.tag');
   if (!tag) return;
   const tr = tag.closest('tr'), td = tag.closest('td');
   if (!td || !tr) return;
-  const colIdx = [...tr.children].indexOf(td);
-  const th = $('#head').querySelectorAll('th')[colIdx];
-  if (!th) return;
-  const colName = (th.dataset.k || '').toLowerCase(), val = tag.textContent.trim();
-  if (colName == 'provider') {
-    S.prov = val; if ($('#fProv')) $('#fProv').value = val; renderChips(); S.off = 0; load();
-  } else if (colName == 'customer') {
-    $('#fQ').value = val; S.off = 0; load();
+  const colKey = (td.dataset.colKey || '').toLowerCase();
+  const val = tag.textContent.trim();
+  if (colKey === 'provider') {
+    S.prov = val;
+    S.filters.provider = val;
+    renderChips();
+    renderFilterPills();
+    S.off = 0;
+    load();
+  } else if (colKey === 'customer' || colKey === 'customer name') {
+    S.filters.customer = val;
+    renderFilterPills();
+    S.off = 0;
+    load();
   }
 };
-$('#go').onclick = () => { S.off = 0; load() };
-$('#prev').onclick = () => { const limit = S.pageSize || PAGE; S.off = Math.max(0, S.off - limit); load() };
-$('#next').onclick = () => { const limit = S.pageSize || PAGE; S.off += limit; load() };
+
+$('#prev').onclick = () => { const limit = S.pageSize || PAGE; S.off = Math.max(0, S.off - limit); load(); };
+$('#next').onclick = () => { const limit = S.pageSize || PAGE; S.off += limit; load(); };
+
 $('#reset').onclick = () => {
-  $$('#filters input').forEach(i => i.value = '');
-  if ($('#fProv')) $('#fProv').value = '';
-  if ($('#fReqBy')) $('#fReqBy').value = '';
-  if ($('#fRaisedBy')) $('#fRaisedBy').value = '';
+  S.filters = {};
   S.prov = '';
   S.cust = '';
-  S.off = 0;
   S.sort = '';
   S.desc = true;
+  S.off = 0;
+  const menu = $('#excelFilterMenu');
+  if (menu) menu.classList.add('hide');
+  activeFilterCol = null;
   renderChips();
+  renderFilterPills();
+  renderHead();
   load();
 };
+
 $('#dl').onclick = async () => {
-  const btn = $('#dl'); btn.disabled = true;
+  const btn = $('#dl');
+  btn.disabled = true;
+  const origText = btn.innerHTML;
+  btn.innerHTML = '<span>⏳ Preparing Excel…</span>';
   try {
     const token = getToken();
     const headers = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const r = await fetch(apiUrl(`${rowsUrl(S.cur)}/export?${params(false)}`), {credentials: 'include', headers});
-    if (r.status == 401) { setToken(''); showLogin('Your session ended. Please sign in again.'); return }
-    if (!r.ok) { const d = await r.json().catch(() => ({})); throw Error(typeof d.detail == 'string' ? d.detail : 'Download failed') }
+    if (r.status == 401) { setToken(''); showLogin('Your session ended. Please sign in again.'); return; }
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw Error(typeof d.detail == 'string' ? d.detail : 'Download failed'); }
     const blob = await r.blob(), a = document.createElement('a'), m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
-    a.href = URL.createObjectURL(blob); a.download = m ? m[1] : (S.cur + '.xlsx');
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  } catch (e) { fail(e) } finally { btn.disabled = false }
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : (S.cur + '.xlsx');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast('Excel spreadsheet downloaded ✔');
+  } catch (e) {
+    fail(e);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
 };
+
+/* ---------- ONE-TIME DELETE ALL DATA ---------- */
+async function checkDeleteAllStatus(tableName) {
+  const btn = $('#deleteAllBtn');
+  if (!btn) return;
+  const targetTable = (!tableName || tableName === ALL) ? 'customer_data' : tableName;
+
+  if (localStorage.getItem('delete_all_used_' + targetTable) === 'true') {
+    btn.disabled = true;
+    btn.classList.add('disabled');
+    btn.title = 'Delete All has already been executed for this table and is permanently locked.';
+    btn.innerHTML = '<span>🔒 Delete All (Used)</span>';
+    return;
+  }
+
+  try {
+    const res = await api(`/api/tables/${enc(targetTable)}/delete-all-status`);
+    if (res && res.used) {
+      localStorage.setItem('delete_all_used_' + targetTable, 'true');
+      btn.disabled = true;
+      btn.classList.add('disabled');
+      btn.title = 'Delete All has already been executed for this table and is permanently locked.';
+      btn.innerHTML = '<span>🔒 Delete All (Used)</span>';
+    } else {
+      btn.disabled = false;
+      btn.classList.remove('disabled');
+      btn.title = 'Permanently delete all records in this table (Can only be executed once)';
+      btn.innerHTML = '<span>🗑️ Delete All</span>';
+    }
+  } catch (e) {
+    // Keep quiet on auth error or network glitch
+  }
+}
+
+function initDeleteAll() {
+  const btn = $('#deleteAllBtn');
+  const modal = $('#deleteAllModal');
+  const cancelBtn = $('#delAllCancelBtn');
+  const confirmBtn = $('#delAllConfirmBtn');
+  const confirmInput = $('#delAllConfirmInput');
+  if (!btn || !modal) return;
+
+  btn.onclick = () => {
+    const targetTable = (!S.cur || S.cur === ALL) ? 'customer_data' : S.cur;
+    if (localStorage.getItem('delete_all_used_' + targetTable) === 'true' || btn.disabled) {
+      toast('Delete All has already been executed once and is permanently locked.', 1);
+      return;
+    }
+
+    if (confirmInput) confirmInput.value = '';
+    if (confirmBtn) confirmBtn.disabled = true;
+
+    try {
+      modal.showModal();
+    } catch (e) {
+      modal.setAttribute('open', '');
+    }
+    if (confirmInput) confirmInput.focus();
+  };
+
+  if (confirmInput && confirmBtn) {
+    confirmInput.oninput = () => {
+      confirmBtn.disabled = confirmInput.value.trim().toUpperCase() !== 'DELETE';
+    };
+    confirmInput.onkeydown = e => {
+      if (e.key === 'Enter' && !confirmBtn.disabled) {
+        confirmBtn.click();
+      }
+    };
+  }
+
+  if (cancelBtn) {
+    cancelBtn.onclick = () => {
+      try { modal.close(); } catch (e) { modal.removeAttribute('open'); }
+    };
+  }
+
+  if (confirmBtn) {
+    confirmBtn.onclick = async () => {
+      const targetTable = (!S.cur || S.cur === ALL) ? 'customer_data' : S.cur;
+      confirmBtn.disabled = true;
+      confirmBtn.innerHTML = '<span>⏳ Deleting…</span>';
+
+      try {
+        const res = await post(`/api/tables/${enc(targetTable)}/delete-all`, {});
+        localStorage.setItem('delete_all_used_' + targetTable, 'true');
+
+        btn.disabled = true;
+        btn.classList.add('disabled');
+        btn.innerHTML = '<span>🔒 Delete All (Used)</span>';
+        btn.title = 'Delete All has already been executed for this table and is permanently locked.';
+
+        try { modal.close(); } catch (e) { modal.removeAttribute('open'); }
+        toast((res && res.message) || 'All records successfully deleted. Delete All is now permanently locked.');
+
+        S.off = 0;
+        await Promise.all([load(), refreshCounts()]);
+      } catch (err) {
+        fail(err);
+        const msg = String(err.message || err);
+        if (msg.includes('already been executed') || msg.includes('only once')) {
+          localStorage.setItem('delete_all_used_' + targetTable, 'true');
+          btn.disabled = true;
+          btn.classList.add('disabled');
+          btn.innerHTML = '<span>🔒 Delete All (Used)</span>';
+          btn.title = 'Delete All has already been executed for this table and is permanently locked.';
+          try { modal.close(); } catch (e) { modal.removeAttribute('open'); }
+        } else {
+          confirmBtn.disabled = false;
+          confirmBtn.innerHTML = '<span>Delete All Data</span>';
+        }
+      }
+    };
+  }
+}
+initDeleteAll();
+
+/* ---------- INDIVIDUAL ROW DELETE (PROFESSIONAL MODAL CONFIRMATION) ---------- */
+let pendingDeleteRow = { id: null, tr: null };
+
+function openDeleteModal(rowId, tr) {
+  if (!rowId) {
+    toast('Cannot determine record ID to delete', 1);
+    return;
+  }
+  const modal = $('#deleteRowDlg');
+  if (!modal) return;
+
+  pendingDeleteRow = { id: rowId, tr: tr };
+
+  let cust = '—', prov = '—', date = '—', plan = '—';
+  if (tr) {
+    const custEl = tr.querySelector('[data-col-key="customer"]') || tr.querySelector('[data-col-key="customer name"]');
+    if (custEl && custEl.textContent.trim()) cust = custEl.textContent.trim();
+
+    const provEl = tr.querySelector('[data-col-key="provider"]');
+    if (provEl && provEl.textContent.trim()) prov = provEl.textContent.trim();
+
+    const dateEl = tr.querySelector('[data-col-key="date"]');
+    if (dateEl && dateEl.textContent.trim()) date = dateEl.textContent.trim();
+
+    const planEl = tr.querySelector('[data-col-key="plan"]') || tr.querySelector('[data-col-key="plan *(months / time duration)"]');
+    const qtyEl = tr.querySelector('[data-col-key="quantity"]');
+    const pText = planEl ? planEl.textContent.trim() : '';
+    const qText = qtyEl ? qtyEl.textContent.trim() : '';
+    if (pText || qText) {
+      plan = [pText, qText ? `Qty: ${qText}` : ''].filter(Boolean).join(' · ');
+    }
+  }
+
+  const cSpan = $('#delRowCustomer'); if (cSpan) cSpan.textContent = cust;
+  const pSpan = $('#delRowProvider'); if (pSpan) pSpan.textContent = prov;
+  const dSpan = $('#delRowDate'); if (dSpan) dSpan.textContent = date;
+  const plSpan = $('#delRowPlan'); if (plSpan) plSpan.textContent = plan;
+
+  const confirmBtn = $('#delRowConfirmBtn');
+  if (confirmBtn) {
+    confirmBtn.disabled = false;
+    confirmBtn.innerHTML = '<span>Delete Record</span>';
+  }
+
+  try {
+    modal.showModal();
+  } catch (e) {
+    modal.setAttribute('open', '');
+  }
+}
+
+function initDeleteRowModal() {
+  const modal = $('#deleteRowDlg');
+  const cancelBtn = $('#delRowCancelBtn');
+  const confirmBtn = $('#delRowConfirmBtn');
+  if (!modal) return;
+
+  if (cancelBtn) {
+    cancelBtn.onclick = () => {
+      try { modal.close(); } catch (e) { modal.removeAttribute('open'); }
+      pendingDeleteRow = { id: null, tr: null };
+    };
+  }
+
+  if (confirmBtn) {
+    confirmBtn.onclick = async () => {
+      const { id: rowId, tr } = pendingDeleteRow;
+      if (!rowId) {
+        try { modal.close(); } catch (e) { modal.removeAttribute('open'); }
+        return;
+      }
+
+      confirmBtn.disabled = true;
+      confirmBtn.innerHTML = '<span>⏳ Deleting…</span>';
+
+      if (tr) {
+        tr.style.opacity = '0.35';
+      }
+
+      try {
+        const targetTable = (!S.cur || S.cur === ALL) ? 'customer_data' : S.cur;
+        await del(`${rowsUrl(targetTable)}/rows/${enc(rowId)}`);
+
+        try { modal.close(); } catch (e) { modal.removeAttribute('open'); }
+
+        if (tr) {
+          tr.classList.add('row-deleted');
+          setTimeout(() => { if (tr.parentElement) tr.remove(); }, 350);
+        }
+
+        const custName = $('#delRowCustomer') ? $('#delRowCustomer').textContent : '';
+        toast(custName && custName !== '—' ? `Record for "${custName}" permanently deleted ✔` : `Record #${rowId} deleted ✔`);
+
+        S.total = Math.max(0, (S.total || 1) - 1);
+        await Promise.all([load(), refreshCounts()]);
+      } catch (err) {
+        if (tr) {
+          tr.style.opacity = '1';
+        }
+        fail(err);
+      } finally {
+        confirmBtn.disabled = false;
+        confirmBtn.innerHTML = '<span>Delete Record</span>';
+        pendingDeleteRow = { id: null, tr: null };
+      }
+    };
+  }
+}
+initDeleteRowModal();
 
 /* ---------- BULK UPLOAD (Excel file: each sheet name = a provider, each row = a customer entry) ---------- */
 const bulkInput = $('#bulkFile'), bulkBtn = $('#bulkUploadBtn'), uploadDlg = $('#uploadAckDlg');
@@ -1059,6 +2335,13 @@ $('#create').onclick = async () => {
 
 /* ---------- boot: already signed in? ---------- */
 (async () => {
-  try { const d = await api('/api/me'); if (d.user) { S.user = d.user; showApp() } else showLogin() }
-  catch (e) { showLogin(e.silent ? '' : e.message) }
+  try {
+    const d = await api('/api/me');
+    if (d.user) { S.user = d.user; showApp(); }
+    else showLogin();
+  } catch (e) {
+    // If checking session on initial boot encounters a network delay/cold-start,
+    // show login form cleanly without an alarming "Failed to fetch" banner
+    showLogin();
+  }
 })();
