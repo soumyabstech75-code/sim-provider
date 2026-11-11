@@ -27,6 +27,9 @@
   </div>
   <form id="loginForm" class="glass tilt" data-tilt="5" autocomplete="on">
     <h2>Sign in</h2><p class="sub">Use your employee ID and password.</p>
+    <div class="banner warn hide" id="serverWarmBanner" style="font-size:12px;margin-bottom:12px">
+      ⚡ Connecting to cloud server (Render free tier wakes up in ~30s on first load). Please wait…
+    </div>
     <label>Employee ID<input id="lId" name="username" autocomplete="username" required></label>
     <label>Password<span class="pw"><input id="lPw" name="password" type="password" autocomplete="current-password" required><button type="button" class="eye" data-eye="lPw" aria-label="Show or hide password">👁</button></span></label>
     <div class="err hide" id="lErr" role="alert"></div>

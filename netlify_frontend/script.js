@@ -54,9 +54,10 @@ const rowsUrl = t => t == ALL ? '/api/all' : `/api/tables/${enc(t)}`;
 
 /* ---------- backend URL detection (Netlify + Render support) ---------- */
 const RENDER_BACKEND_URL = 'https://sim-provider-1f4c.onrender.com';
-// Default to relative '' so Netlify's _redirects proxy handles /api/* without CORS or preflight issues.
-// Can be overridden with window.API_BASE = 'https://sim-provider-1f4c.onrender.com' if direct calls are desired.
-const API_BASE = window.API_BASE !== undefined ? window.API_BASE : '';
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+// On Netlify (*.netlify.app) or external domain, connect directly to the live Render backend URL.
+// This completely bypasses Netlify's 26-second proxy timeout, eliminating Netlify 504 "Request ID: 01M..." errors.
+const API_BASE = window.API_BASE !== undefined ? window.API_BASE : (isLocal ? '' : RENDER_BACKEND_URL);
 const apiUrl = u => (u.startsWith('http://') || u.startsWith('https://')) ? u : (API_BASE + u);
 
 const getToken = () => { try { return localStorage.getItem('vi-token') || ''; } catch (e) { return ''; } };
@@ -71,13 +72,34 @@ async function api(u, o = {}) {
   if (o.body && typeof o.body != 'string') {
     o = {...o, body: JSON.stringify(o.body)};
   }
+
+  // Show waking-up notice if request takes > 3.5 seconds (Render free tier spin-up)
+  let wakeNoticeTimer = setTimeout(() => {
+    const banner = $('#serverWarmBanner');
+    if (banner) banner.classList.remove('hide');
+    else toast('⏳ Cloud server is waking up (takes ~30s on first load). Please wait…');
+  }, 3500);
+
   let r, d = {};
   try {
     r = await fetch(apiUrl(u), {credentials: 'include', ...o, headers});
+    clearTimeout(wakeNoticeTimer);
+    const banner = $('#serverWarmBanner');
+    if (banner) banner.classList.add('hide');
     d = await r.json().catch(() => ({}));
   } catch (err) {
+    clearTimeout(wakeNoticeTimer);
+    const banner = $('#serverWarmBanner');
+    if (banner) banner.classList.add('hide');
+
+    // Auto-retry once after 4 seconds if server was cold-starting
+    if (!o._retried && (!u.includes('/export') && !u.includes('/upload'))) {
+      await new Promise(res => setTimeout(res, 4000));
+      return api(u, {...o, _retried: true});
+    }
+
     if (err && err.message && err.message.toLowerCase().includes('fetch')) {
-      throw Error('Cannot connect to backend server. If the server is waking up from sleep, please wait 15 seconds and try again.');
+      throw Error('Cannot connect to cloud backend. The server may still be booting up from sleep, please wait a moment and try again.');
     }
     throw err;
   }

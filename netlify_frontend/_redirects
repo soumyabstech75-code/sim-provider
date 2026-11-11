@@ -1,11 +1,3 @@
 # Netlify Redirects for BSTPL SIM Info Frontend
-# Proxies static assets and API requests to Render backend: https://sim-provider-1f4c.onrender.com
-
-# Map /static/* to root files if deployed as root
-/static/*  /:splat  200
-
-# Proxy /api/* to the live Render backend
-/api/*  https://sim-provider-1f4c.onrender.com/api/:splat  200!
-
-# Single page application fallback
-/*  /index.html  200
+/api/*  https://sim-provider-1f4c.onrender.com/api/:splat  200
+/*      /index.html                                        200
