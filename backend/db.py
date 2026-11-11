@@ -1042,7 +1042,7 @@ def _prepare(table_name):
 
 
 def get_providers_summary(table_name=DEFAULT_TABLE):
-    """Entry counts for the five default providers, followed by any other provider found in the data."""
+    """Entry counts for the default SIM providers, followed by any other provider found in the data."""
     _prepare(table_name)
     prov = next((c["name"] for c in columns(table_name) if c["name"].lower() == "provider"), None)
     counts = {}
@@ -1050,10 +1050,39 @@ def get_providers_summary(table_name=DEFAULT_TABLE):
         p = ident(prov)
         for r in fetch(f"SELECT LOWER(TRIM({p})) AS prov, COUNT(*) AS cnt FROM {ident(table_name)} "
                        f"WHERE {p} IS NOT NULL AND TRIM({p})<>'' GROUP BY LOWER(TRIM({p}))", ()):
-            counts[r["prov"]] = r["cnt"]
+            counts[r["prov"]] = int(r["cnt"] or 0)
     out = [{"provider": p, "count": counts.pop(p, 0)} for p in DEFAULT_PROVIDERS]
-    out += [{"provider": p, "count": n} for p, n in sorted(counts.items())]
+    for p, n in sorted(counts.items()):
+        out.append({"provider": p, "count": n})
     return out
+
+
+def delete_provider_data(provider_name, table_name=DEFAULT_TABLE, user_id="", ip_info=("", "")):
+    """Delete all records and references for a specific SIM provider."""
+    if not table_name or table_name == "__all__":
+        table_name = "customer_data"
+    _prepare(table_name)
+    p = (provider_name or "").strip()
+    if not p:
+        raise ValueError("Provider name is required")
+    prov_col = next((c["name"] for c in columns(table_name) if c["name"].lower() == "provider"), "provider")
+
+    def go(c):
+        c.execute(f"DELETE FROM {ident(table_name)} WHERE LOWER(TRIM({ident(prov_col)})) = LOWER(%s)", (p,))
+        return c.rowcount
+    affected = run(go)
+
+    try:
+        import auth
+        auth.audit(user_id, "delete_provider", f"Permanently deleted SIM provider '{p}' and all its {affected} record(s) from {table_name}", ip_info[0], ip_info[1])
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "provider": p,
+        "affected": affected,
+        "message": f"SIM provider '{p}' and all its {affected} record(s) have been permanently deleted."
+    }
 
 
 def get_customers(table_name=DEFAULT_TABLE):

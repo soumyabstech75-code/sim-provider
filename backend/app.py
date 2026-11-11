@@ -344,10 +344,19 @@ def bulk_upload(request: Request, file: UploadFile = File(...), table: str = db.
 
 @api.get("/providers")
 def list_providers(table: str = db.DEFAULT_TABLE):
+    summary = db.get_providers_summary(table)
     return {
-        "providers": db.DEFAULT_PROVIDERS,
-        "summary": db.get_providers_summary(table)
+        "providers": [s["provider"] for s in summary],
+        "summary": summary
     }
+
+
+@api.delete("/providers/{provider_name}")
+def delete_provider(provider_name: str, request: Request, user: dict = Depends(require_user)):
+    try:
+        return db.delete_provider_data(provider_name, user_id=user["id"], ip_info=who(request))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @api.get("/customers")

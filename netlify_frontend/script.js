@@ -47,7 +47,7 @@ function getStoredCols() {
 function saveStoredCols(cols) {
   try { if (cols && cols.length) localStorage.setItem(colsKey(), JSON.stringify(cols)); else localStorage.removeItem(colsKey()) } catch (e) {}
 }
-const provNames = () => { const n = (S.providers || []).map(p => p.provider); return n.length ? n : DEFAULT_PROVIDERS };
+const provNames = () => { const list = (S.providers || []).map(p => p.provider).filter(Boolean); return list.length ? list : DEFAULT_PROVIDERS; };
 const TYPES = {text: 'Text', longtext: 'Long text', int: 'Whole number', decimal: 'Decimal / amount', date: 'Date'};
 const CUST = /customer/i, LIST = /plan|product|profile|requested|raised|provider|status|type/i, NUMCOL = /^(qty|quantity|amount|total|price|cost)$/i;
 const rowsUrl = t => t == ALL ? '/api/all' : `/api/tables/${enc(t)}`;
@@ -367,12 +367,14 @@ async function loadProviders() {
 
 function renderChips() {
   const curTable = S.tables.find(t => t.name == S.cur);
-  const totalRows = curTable ? curTable.rows : 0;
+  const totalRows = (S.total !== undefined && S.total !== null) ? S.total : (curTable ? curTable.rows : 0);
+  const provList = provNames();
   const provMap = Object.fromEntries((S.providers || []).map(p => [(p.provider || '').toLowerCase(), p.count || 0]));
   let html = `<button class="chip ${!S.prov ? 'on' : ''}" data-prov="">🌐 All Data<small>${fmt(totalRows)}</small></button>`;
-  html += provNames().map(p => {
+  html += provList.map(p => {
     const count = provMap[p.toLowerCase()] || 0;
-    return `<button class="chip ${S.prov == p ? 'on' : ''}" data-prov="${esc(p)}">${esc(p)}<small>${fmt(count)}</small></button>`;
+    const isOn = S.prov && S.prov.toLowerCase() === p.toLowerCase();
+    return `<button class="chip ${isOn ? 'on' : ''}" data-prov="${esc(p)}">${esc(p)}<small>${fmt(count)}</small></button>`;
   }).join('');
   if (S.tables.length > 1) {
     html += '<span style="border-left:1px solid var(--line);margin:0 6px;height:24px;align-self:center"></span>';
@@ -1350,12 +1352,12 @@ async function openExcelFilter(colKey, btnEl) {
           <input type="radio" name="efProvRadio" value="" ${!curProv ? 'checked' : ''}>
           <span>🌐 All Data</span>
         </label>
-        ${provs.map(p => `
+        ${provs.length ? provs.map(p => `
           <label class="excel-fm-item">
             <input type="radio" name="efProvRadio" value="${esc(p)}" ${curProv.toLowerCase() === p.toLowerCase() ? 'checked' : ''}>
             <span>${esc(p)}</span>
           </label>
-        `).join('')}
+        `).join('') : '<div style="font-size:11px;color:var(--mut);padding:8px">No SIM providers found</div>'}
       </div>
     `;
   } else {
@@ -1769,10 +1771,13 @@ function initDeleteAll() {
         btn.title = 'Delete All has already been executed for this table and is permanently locked.';
 
         try { modal.close(); } catch (e) { modal.removeAttribute('open'); }
-        toast((res && res.message) || 'All records successfully deleted. Delete All is now permanently locked.');
+        toast((res && res.message) || 'All records and SIM providers successfully deleted.');
 
         S.off = 0;
-        await Promise.all([load(), refreshCounts()]);
+        S.prov = '';
+        delete S.filters.provider;
+        await Promise.all([load(), refreshCounts(), loadProviders()]);
+        renderChips();
       } catch (err) {
         fail(err);
         const msg = String(err.message || err);
@@ -1983,13 +1988,14 @@ if (bulkBtn && bulkInput) {
 /* ---------- INSERT: Add new entry with exact guided fields ---------- */
 async function buildForm() {
   const today = new Date().toLocaleDateString('en-CA');
-  const curP = S.prov && provNames().includes(S.prov.toLowerCase()) ? S.prov.toLowerCase() : (provNames()[0] || 'sensorise');
+  const availableProvs = provNames().length ? provNames() : ['sensorise', 'iotivity', 'vi', 'growspace', 'taisys'];
+  const curP = S.prov && availableProvs.includes(S.prov.toLowerCase()) ? S.prov.toLowerCase() : availableProvs[0];
 
   const primaryHtml = `
     <!-- 1. Provider -->
     <label>Provider *
       <select id="insProvider" required>
-        ${provNames().map(p => `<option value="${esc(p)}" ${p == curP ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+        ${availableProvs.map(p => `<option value="${esc(p)}" ${p == curP ? 'selected' : ''}>${esc(p)}</option>`).join('')}
       </select>
     </label>
 
